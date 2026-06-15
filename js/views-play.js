@@ -49,7 +49,7 @@ Views.play = async function (root, cid) {
   sheetToggle.addEventListener('click', function () { play.classList.toggle('sheet-open'); });
   const endSceneBtn = h('button', { class: 'btn small' }, 'End scene');
   endSceneBtn.addEventListener('click', endScene);
-  const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise & boundaries' }, 'Story setup');
+  const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise, boundaries, character & cast' }, 'Story & cast');
   setupBtn.addEventListener('click', editStorySetup);
 
   const sheetPanel = h('aside', { class: 'sheet-panel' },
@@ -196,25 +196,90 @@ Views.play = async function (root, cid) {
     runTurn(0);
   }
 
-  function editStorySetup() {
+  async function editStorySetup() {
     const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
     const premiseTa = h('textarea', { rows: '5', placeholder: 'Where does the story start? What\'s the situation, the hook, the job?' }, campaign.premise || '');
     const boundsTa = h('textarea', { rows: '4', placeholder: 'Tone, content to keep in or out — e.g. "pulpy and fun, fade to black on gore, no harm to children".' }, campaign.boundaries || '');
+
+    /* ---- cast: wiki entries pinned to the CURRENT scene ---- */
+    const allWiki = await Store.listWiki(cid);
+    let pinnedIds = (scene.pinnedEntryIds || []).slice();
+    const existingWrap = h('div', { class: 'cast-list' });
+    function renderExisting() {
+      existingWrap.innerHTML = '';
+      const pinned = pinnedIds
+        .map(function (id) { return allWiki.find(function (e) { return e.id === id; }); })
+        .filter(function (e) { return e && !e.mergedInto; });
+      if (!pinned.length) { existingWrap.append(h('p', { class: 'card-sub' }, 'Nothing pinned to this scene yet.')); return; }
+      pinned.forEach(function (e) {
+        const rm = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Unpin' }, 'Unpin');
+        rm.addEventListener('click', function () {
+          pinnedIds = pinnedIds.filter(function (x) { return x !== e.id; });
+          renderExisting();
+        });
+        existingWrap.append(h('div', { class: 'cast-row' },
+          h('div', { class: 'cast-row-head' }, h('span', null, '📌 ' + e.name + ' · ' + e.type), rm)));
+      });
+    }
+    renderExisting();
+
+    const newRows = [];
+    const newWrap = h('div', { class: 'cast-list' });
+    function addCastRow() {
+      const nameI = h('input', { type: 'text', placeholder: 'Name' });
+      const typeS = h('select', null,
+        h('option', { value: 'npc' }, 'NPC'),
+        h('option', { value: 'faction' }, 'Faction'),
+        h('option', { value: 'location' }, 'Location'),
+        h('option', { value: 'item' }, 'Item'));
+      const descI = h('input', { type: 'text', placeholder: 'Who/what they are — one or two lines the GM should know' });
+      const del = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Remove' }, '×');
+      const rowEl = h('div', { class: 'cast-row' },
+        h('div', { class: 'cast-row-head' }, nameI, typeS, del), descI);
+      const ref = { name: nameI, type: typeS, desc: descI };
+      del.addEventListener('click', function () {
+        const i = newRows.indexOf(ref); if (i >= 0) newRows.splice(i, 1);
+        rowEl.remove();
+      });
+      newRows.push(ref);
+      newWrap.append(rowEl);
+      nameI.focus();
+    }
+    const addCastBtn = h('button', { class: 'btn small', type: 'button' }, '+ Add character / NPC');
+    addCastBtn.addEventListener('click', addCastRow);
+
     const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
     saveBtn.addEventListener('click', async function () {
       campaign.premise = premiseTa.value.trim();
       campaign.boundaries = boundsTa.value.trim();
       await Store.saveCampaign(campaign);
       if (pc) { pc.description = charTa.value.trim(); await Store.saveCharacter(cid, pc); }
+      for (const r of newRows) {
+        const cn = r.name.value.trim();
+        if (!cn) continue;
+        const id = await Store.saveWiki(cid, {
+          type: r.type.value || 'npc', name: cn, aliases: [], tags: [],
+          body: r.desc.value.trim(), createdBy: 'player', mergedInto: null
+        });
+        pinnedIds.push(id);
+      }
+      scene.pinnedEntryIds = pinnedIds;
+      await Store.saveScene(cid, scene);
+      renderHeader();
       Modal.close();
       Toast('Setup saved — the GM will use it from the next reply.');
     });
+
     Modal.open(h('div', null,
-      h('h2', null, 'Story & character setup'),
+      h('h2', null, 'Story & cast setup'),
       h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override the system\'s default tone.'),
       pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
       h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
       h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa),
+      h('div', { class: 'create-section' },
+        h('h3', null, 'Cast pinned to this scene'),
+        h('p', { class: 'card-sub' }, 'NPCs, factions, or places the GM should know now. Pinned cast is always in the GM\'s context.'),
+        existingWrap, newWrap, addCastBtn),
       h('div', { class: 'modal-actions' },
         h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), saveBtn)));
   }
