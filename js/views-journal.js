@@ -59,7 +59,7 @@ Views.journal = async function (root, cid) {
           const b = seg.block;
           let label = b.tag;
           if (b.tag === 'gm-roll') label = 'roll requested: ' + (b.data.roll || '') + (b.data.reason ? ' — ' + b.data.reason : '');
-          if (b.tag === 'gm-sheet') label = 'sheet: ' + SheetUI.describeChanges(b.data.changes);
+          if (b.tag === 'gm-sheet') label = 'sheet change' + (b.data.reason ? ': ' + b.data.reason : '');
           if (b.tag === 'gm-wiki') label = 'wiki: ' + (b.data.name || '');
           if (b.tag === 'gm-lookup') label = 'lookup: ' + (b.data.query || '');
           if (b.tag === 'gm-scene') label = 'scene summary proposed';

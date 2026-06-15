@@ -533,7 +533,7 @@ main { min-height: calc(100vh - 52px); }
   padding: 1.5px 8px;
 }
 .tag-chip.pin { color: var(--accent); border-color: var(--accent); }
-.type-npc { color: #cba1d8; } .type-location { color: #9cc29c; }
+.type-pc { color: #e0c060; } .type-npc { color: #cba1d8; } .type-location { color: #9cc29c; }
 .type-faction { color: #d8b06c; } .type-item { color: #9cb8d8; } .type-event { color: #d89c9c; }
 
 /* ---------- journal ---------- */

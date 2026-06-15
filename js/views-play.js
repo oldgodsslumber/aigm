@@ -1,15 +1,15 @@
-/* AI GM — Play View: transcript center, sheet panel, scene header.
- * The chat loop, tag-protocol handling, rolls, sheet auto-apply + undo. */
+/* AI GM — Play View: transcript center, scene header.
+ * System-agnostic: no dice, no character sheet. The chat loop, tag-protocol
+ * handling (wiki / lookup / scene), and scene management. */
 window.Views = window.Views || {};
 
 Views.play = async function (root, cid) {
   root.dataset.screenLabel = 'Play View';
-  let campaign, pack, pc, scenes, scene, messages, sheetLog;
+  let campaign, pc, scenes, scene, messages;
   let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0;
 
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
-    pack = await Store.getPack(campaign.packId);
     const chars = await Store.listCharacters(cid);
     pc = chars.find(function (c) { return !c.isNPC; }) || chars[0];
     scenes = await Store.listScenes(cid);
@@ -22,55 +22,37 @@ Views.play = async function (root, cid) {
       scene = scenes.find(function (s) { return s.id === sid; });
     }
     messages = await Store.listMessages(cid);
-    sheetLog = await Store.listSheetEvents(cid);
   }
   await loadAll();
   await Store.touch(cid);
 
   /* ---------- shell ---------- */
   root.innerHTML = '';
-  const play = h('div', { class: 'play', 'data-layout': Settings.get().layout });
+  const play = h('div', { class: 'play', 'data-layout': 'focus' });
   const logEl = h('div', { class: 'chat-log' });
   const banner = h('div', { class: 'play-banner', style: 'display:none' });
   const input = h('textarea', { class: 'composer-input', rows: '2', placeholder: 'What do you do?' });
   const sendBtn = h('button', { class: 'btn accent composer-send' }, 'Send');
-  const sheetBody = h('div', { class: 'sheet-body' });
   const sceneTitleEl = h('span', { class: 'scene-title' });
   const pinsEl = h('span', { class: 'scene-pins' });
   const reqMeter = h('a', { class: 'req-meter', href: '#/settings', title: 'Gemini requests used today — click for the full breakdown' });
 
-  const layoutBtn = h('button', { class: 'btn small ghost', title: 'Cycle Play View layout' }, '⊞ Layout');
-  layoutBtn.addEventListener('click', function () {
-    const order = ['sheet-right', 'sheet-left', 'focus'];
-    const next = order[(order.indexOf(play.dataset.layout) + 1) % order.length];
-    play.dataset.layout = next;
-    Settings.set({ layout: next });
-  });
-  const sheetToggle = h('button', { class: 'btn small ghost sheet-toggle' }, 'Sheet');
-  sheetToggle.addEventListener('click', function () { play.classList.toggle('sheet-open'); });
   const endSceneBtn = h('button', { class: 'btn small' }, 'End scene');
   endSceneBtn.addEventListener('click', endScene);
   const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise, boundaries, character & cast' }, 'Story & cast');
   setupBtn.addEventListener('click', editStorySetup);
-
-  const sheetPanel = h('aside', { class: 'sheet-panel' },
-    h('div', { class: 'sheet-head' },
-      h('h2', null, pc ? pc.name : 'No character'),
-      h('button', { class: 'btn small ghost', onclick: showSheetLog }, 'History')),
-    sheetBody);
 
   play.append(
     h('header', { class: 'scene-bar' },
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, reqMeter, setupBtn, endSceneBtn, layoutBtn, sheetToggle)),
+      h('div', { class: 'scene-bar-actions' }, reqMeter, setupBtn, endSceneBtn)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
         h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
-          input, sendBtn)),
-      sheetPanel));
+          input, sendBtn))));
   root.append(play);
 
   input.addEventListener('keydown', function (e) {
@@ -78,9 +60,6 @@ Views.play = async function (root, cid) {
   });
 
   /* ---------- helpers ---------- */
-  function rollDef(id) {
-    return (pack.rollDefinitions || []).find(function (r) { return r.id === id; });
-  }
   function setBusy(b) {
     busy = b;
     sendBtn.disabled = b;
@@ -103,60 +82,6 @@ Views.play = async function (root, cid) {
   function keyMissing() {
     const s = Settings.forCampaign(campaign);
     return s.backend === 'gemini' && !s.geminiKey;
-  }
-
-  /* ---------- sheet ---------- */
-  async function logDiff(changes, source, transcriptMsgId) {
-    if (!pc) return null;
-    SheetUI.applyChanges(pc.sheetState, changes);
-    await Store.saveCharacter(cid, pc);
-    const evId = await Store.addSheetEvent(cid, {
-      charId: pc.id, source: source, diff: changes, transcriptMsgId: transcriptMsgId || null
-    });
-    sheetLog = await Store.listSheetEvents(cid);
-    renderSheet();
-    return evId;
-  }
-  async function undoEvent(evId) {
-    const ev = sheetLog.find(function (e) { return e.id === evId; });
-    if (!ev || ev.undone) return;
-    SheetUI.applyChanges(pc.sheetState, ev.diff, true);
-    await Store.saveCharacter(cid, pc);
-    ev.undone = true;
-    await Store.updateSheetEvent(cid, ev);
-    await Store.addSheetEvent(cid, { charId: pc.id, source: 'undo', diff: ev.diff.map(function (c) {
-      return { field: c.field, from: c.to, to: c.from };
-    }), reverses: ev.id });
-    sheetLog = await Store.listSheetEvents(cid);
-    renderSheet(); renderLog();
-  }
-  function renderSheet() {
-    if (!pc) { sheetBody.innerHTML = '<p class="card-sub">This campaign has no character.</p>'; return; }
-    SheetUI.render(sheetBody, {
-      schema: pack.sheetSchema,
-      state: pc.sheetState,
-      onDiff: async function (changes) { await logDiff(changes, 'player'); }
-    });
-  }
-  function showSheetLog() {
-    const list = h('div', { class: 'sheetlog-list' });
-    const events = sheetLog.slice().reverse();
-    if (!events.length) list.append(h('p', { class: 'card-sub' }, 'No changes yet. The sheet is the log — every change lands here with an undo.'));
-    events.forEach(function (ev) {
-      const row = h('div', { class: 'sheetlog-row' + (ev.undone ? ' undone' : '') },
-        h('span', { class: 'sl-src' }, ev.source),
-        h('span', { class: 'sl-diff' }, SheetUI.describeChanges(ev.diff)),
-        h('span', { class: 'sl-ts' }, fmtTime(ev.ts)));
-      if (ev.source !== 'undo' && !ev.undone) {
-        const u = h('button', { class: 'btn small ghost' }, 'Undo');
-        u.addEventListener('click', async function () { await undoEvent(ev.id); Modal.close(); showSheetLog(); });
-        row.append(u);
-      }
-      list.append(row);
-    });
-    Modal.open(h('div', { class: 'modal-wide' },
-      h('h2', null, 'Sheet history'), list,
-      h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: Modal.close }, 'Close'))));
   }
 
   /* ---------- wiki upserts ---------- */
@@ -307,10 +232,10 @@ Views.play = async function (root, cid) {
       const settings = Settings.forCampaign(campaign);
       const wiki = await Store.listWiki(cid);
       const asm = Context.assemble({
-        pack: pack, schema: pack.sheetSchema, character: pc,
+        character: pc,
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
         premise: campaign.premise, boundaries: campaign.boundaries,
-        manualDice: settings.manualDice !== false,
+        rulesNotes: campaign.rulesNotes,
         messages: messages, budget: Settings.budgetFor(settings)
       });
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });
@@ -324,7 +249,7 @@ Views.play = async function (root, cid) {
       const msg = {
         role: 'gm', content: res.text, sceneId: scene.id,
         blocks: parsed.blocks.map(function (b) { return { tag: b.tag, data: b.data }; }),
-        blockMeta: {}, rollResults: {}
+        blockMeta: {}
       };
       await Store.addMessage(cid, msg);
       messages = await Store.listMessages(cid);
@@ -344,11 +269,7 @@ Views.play = async function (root, cid) {
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i];
       try {
-        if (b.tag === 'gm-sheet') {
-          if (!pc || !b.data.changes) continue;
-          const evId = await logDiff(b.data.changes, 'llm', msg.id);
-          msg.blockMeta[i] = { eventId: evId };
-        } else if (b.tag === 'gm-wiki') {
+        if (b.tag === 'gm-wiki') {
           const r = await upsertWiki(b.data);
           if (r) msg.blockMeta[i] = { entryId: r.id, updated: r.updated };
         } else if (b.tag === 'gm-lookup') {
@@ -392,25 +313,6 @@ Views.play = async function (root, cid) {
         await runTurn(depth + 1);
       }
     }
-  }
-
-  async function onRollComplete(msg, blockIndex, result) {
-    msg.rollResults = msg.rollResults || {};
-    msg.rollResults[blockIndex] = result;
-    await Store.updateMessage(cid, msg);
-    const payload = {
-      roll: result.rollId, character: (msg.blocks[blockIndex].data || {}).character,
-      dice: result.dice.map(function (d) { return d.value; }),
-      outcome: result.outcome, summary: result.text
-    };
-    if (result.total != null) payload.total = result.total;
-    if (result.successes != null) payload.successes = result.successes;
-    if (result.complications) payload.complications = result.complications;
-    if (result.sets) payload.sets = result.sets;
-    if (result.difficulty != null) payload.difficulty = result.difficulty;
-    await Store.addMessage(cid, { role: 'roll-result', content: Tags.fence('roll-result', payload), sceneId: scene.id });
-    messages = await Store.listMessages(cid);
-    await runTurn(0);
   }
 
   /* ---------- scenes ---------- */
@@ -488,44 +390,6 @@ Views.play = async function (root, cid) {
 
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
-    if (block.tag === 'gm-roll') {
-      const def = rollDef(block.data.roll);
-      const manualDice = Settings.forCampaign(campaign).manualDice !== false;
-      /* Manual mode, or an unknown/garbled roll id (def missing) → don't build
-       * the dice widget (it throws on a missing def, which freezes the whole
-       * log). Show a plain prompt; the player rolls and types the result. */
-      if (manualDice || !def) {
-        const d = block.data || {};
-        return h('div', { class: 'inline-notice roll-notice' },
-          h('span', { class: 'notice-icon' }, '🎲'),
-          h('span', null,
-            h('strong', null, 'Roll called' + (d.character ? ' for ' + d.character : '')),
-            (d.roll ? ' · ' + d.roll : '') + (d.reason ? ' — ' + d.reason : '') + '. ',
-            'Roll it yourself and type the result below.'));
-      }
-      return Dice.widget({
-        def: def, data: block.data,
-        result: (msg.rollResults || {})[bi] || null,
-        onRoll: function (result) { onRollComplete(msg, bi, result); }
-      });
-    }
-    if (block.tag === 'gm-sheet') {
-      const ev = sheetLog.find(function (e) { return e.id === meta.eventId; });
-      const note = h('div', { class: 'inline-notice sheet-notice' },
-        h('span', { class: 'notice-icon' }, '✎'),
-        h('span', null,
-          h('strong', null, (block.data.character || '') + ' — sheet updated. '),
-          SheetUI.describeChanges(block.data.changes),
-          block.data.reason ? h('em', { class: 'notice-reason' }, ' (' + block.data.reason + ')') : null));
-      if (ev && !ev.undone) {
-        const u = h('button', { class: 'btn small ghost' }, 'Undo');
-        u.addEventListener('click', function () { undoEvent(ev.id); });
-        note.append(u);
-      } else if (ev && ev.undone) {
-        note.append(h('span', { class: 'undone-tag' }, 'undone'));
-      }
-      return note;
-    }
     if (block.tag === 'gm-wiki') {
       return h('div', { class: 'inline-notice wiki-notice' },
         h('span', { class: 'notice-icon' }, '✦'),
@@ -572,14 +436,6 @@ Views.play = async function (root, cid) {
       });
       return el;
     }
-    if (m.role === 'roll-result') {
-      let line = 'Dice rolled.';
-      try {
-        const d = JSON.parse(m.content.replace(/```roll-result\n?/, '').replace(/```$/, ''));
-        line = (d.character ? d.character + ' rolled: ' : 'Rolled: ') + (d.summary || d.outcome || '');
-      } catch (e) { /* keep default */ }
-      return h('div', { class: 'msg msg-info' }, h('span', { class: 'die-mini' }, '⚄'), ' ' + line);
-    }
     if (m.role === 'info') {
       if (m.content.indexOf('```lookup-result') === 0) {
         return h('div', { class: 'msg msg-info' }, 'Wiki results returned to the GM.');
@@ -602,7 +458,7 @@ Views.play = async function (root, cid) {
       beginBtn.addEventListener('click', begin);
       logEl.append(h('div', { class: 'empty-state' },
         h('p', { class: 'empty-title' }, campaign.name),
-        h('p', null, 'The GM knows the rules of ' + pack.meta.name + (pc ? ' and is ready to run ' + pc.name + '\'s story.' : '.')),
+        h('p', null, pc ? 'The GM is ready to run ' + pc.name + '\'s story.' : 'The GM is ready to run your story.'),
         keyMissing()
           ? h('p', null, h('a', { class: 'btn accent', href: '#/settings' }, 'Add your Gemini key to start'))
           : beginBtn));
@@ -622,7 +478,6 @@ Views.play = async function (root, cid) {
   }
 
   renderHeader();
-  renderSheet();
   renderLog();
   renderRequestMeter();
   if (keyMissing() && messages.length) showBanner('No Gemini API key set — add yours in Settings to play.', false);

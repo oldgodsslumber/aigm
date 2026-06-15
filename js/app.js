@@ -58,7 +58,6 @@ const Router = (function () {
       if (route.view === 'play' && route.id) await Views.play(root, route.id);
       else if (route.view === 'wiki' && route.id) await Views.wiki(root, route.id);
       else if (route.view === 'journal' && route.id) await Views.journal(root, route.id);
-      else if (route.view === 'packs') await Views.packs(root);
       else if (route.view === 'settings') await Views.settings(root);
       else await Views.campaigns(root);
     } catch (e) {
@@ -78,14 +77,6 @@ const Router = (function () {
 (async function boot() {
   Store.init();
 
-  /* seed the built-in packs (id-stable, so re-seed only if missing) */
-  const builtins = [window.DEMO_PACK, window.OUTGUNNED_PACK];
-  for (const p of builtins) {
-    if (!p) continue;
-    const have = await Store.getPack(p.id);
-    if (!have) await Store.savePack(JSON.parse(JSON.stringify(p)));
-  }
-
   window.addEventListener('hashchange', function () { Router.go(); });
 
   if (!Store.profile()) {
@@ -101,7 +92,7 @@ const Router = (function () {
     nameInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') start.click(); });
     Modal.open(h('div', null,
       h('h2', null, 'Welcome to AI GM'),
-      h('p', null, 'A solo tabletop RPG, run by an AI Game Master that remembers your campaign — every NPC, every scene, every roll.'),
+      h('p', null, 'A solo tabletop RPG, run by an AI Game Master that remembers your campaign — every NPC, every scene, every thread.'),
       h('p', { class: 'card-sub' }, 'Everything is stored in this browser for now. Google sign-in arrives when Firebase is wired up; this name just labels your campaigns.'),
       h('label', { class: 'form-row' }, h('span', null, 'Name'), nameInp),
       h('div', { class: 'modal-actions' }, start)));

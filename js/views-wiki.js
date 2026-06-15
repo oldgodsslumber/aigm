@@ -5,7 +5,7 @@ Views.wiki = async function (root, cid) {
   root.dataset.screenLabel = 'Wiki View';
   const campaign = await Store.getCampaign(cid);
   let entries = await Store.listWiki(cid);
-  const TYPES = ['npc', 'location', 'faction', 'item', 'event'];
+  const TYPES = ['pc', 'npc', 'location', 'faction', 'item', 'event'];
   let typeFilter = '', query = '';
 
   root.innerHTML = '';
