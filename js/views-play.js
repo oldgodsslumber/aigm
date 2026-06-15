@@ -216,6 +216,9 @@ Views.play = async function (root, cid) {
         messages: messages, budget: Settings.budgetFor(settings)
       });
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });
+      if (res.model && res.limit) {
+        Toast(res.label + ' · ' + res.used + '/' + res.limit + ' requests today');
+      }
       const parsed = Tags.parse(res.text);
       const msg = {
         role: 'gm', content: res.text, sceneId: scene.id,

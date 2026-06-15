@@ -41,10 +41,23 @@ Views.settings = async function (root) {
     h('option', { value: 'focus' }, 'Focus — full-width reading, sheet as drawer'));
   layoutSel.value = s.layout;
 
+  /* today's per-model request usage — a reminder of free-tier spend */
+  const usage = (LLM.geminiUsage && LLM.geminiUsage()) || [];
+  const usageRows = usage.map(function (m) {
+    return h('div', { class: 'usage-row' },
+      h('span', null, m.label),
+      h('span', { class: m.used >= m.limit ? 'usage-count exhausted' : 'usage-count' },
+        m.used + ' / ' + m.limit));
+  });
+  const usageBox = usage.length ? h('div', { class: 'usage-box' },
+    h('span', { class: 'sf-hint' }, 'Requests used today (resets at midnight). When a model is spent, the GM auto-switches to the next one.'),
+    usageRows) : null;
+
   const geminiFields = h('div', { class: 'settings-sub' },
     row('Gemini API key', h('div', { class: 'inline-pair' }, keyInp, showKey),
       'Stored in this browser only — never synced, never sent anywhere but Google.'),
-    row('Model', gModel));
+    row('Model', gModel, 'Starts here, then auto-falls through 2.5 Flash → Flash Lite → Gemma 4 as daily limits are hit.'),
+    usageBox);
   const localFields = h('div', { class: 'settings-sub' },
     row('Base URL', lUrl, 'OpenAI-compatible. Backend must allow CORS for this page\'s origin. Chrome only.'),
     row('Model name', lModel));

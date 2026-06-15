@@ -604,6 +604,12 @@ main { min-height: calc(100vh - 52px); }
 .settings-card h2 { font-size: 19px; margin-bottom: 8px; }
 .settings-sub { border-left: 2px solid var(--line); padding-left: 16px; margin: 4px 0 4px 2px; }
 .settings-save { display: flex; justify-content: flex-end; }
+.usage-box { margin-top: 8px; }
+.usage-row { display: flex; justify-content: space-between; align-items: baseline;
+             padding: 3px 0; font-size: 13px; border-bottom: 1px solid var(--line); }
+.usage-row:last-child { border-bottom: none; }
+.usage-count { font-variant-numeric: tabular-nums; color: var(--faint); }
+.usage-count.exhausted { color: var(--danger, #e05b5b); font-weight: 600; }
 
 /* ---------- mobile ---------- */
 @media (max-width: 880px) {
