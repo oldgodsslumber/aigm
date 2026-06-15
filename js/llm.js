@@ -24,6 +24,22 @@ const LLM = (function () {
     { id: 'gemma-4-26b-a4b-it',    dailyLimit: 1500, label: 'Gemma 4 26B-A4B' }
   ];
 
+  /* Curated, valid model IDs for the Settings picker — so the player selects a
+   * known-good id instead of typing one (a typo yields a 400 "unexpected model
+   * name format"). The first four are the auto-fallback chain. */
+  const GEMINI_MODELS = [
+    { id: 'gemini-2.5-flash',      label: 'Gemini 2.5 Flash — default, auto-falls through · 20/day free' },
+    { id: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite — faster · 20/day free' },
+    { id: 'gemma-4-31b-it',        label: 'Gemma 4 31B — dense, big free quota · 1500/day' },
+    { id: 'gemma-4-26b-a4b-it',    label: 'Gemma 4 26B-A4B — MoE, big free quota · 1500/day' },
+    { id: 'gemma-4-e4b-it',        label: 'Gemma 4 E4B — small / fast' },
+    { id: 'gemma-4-e2b-it',        label: 'Gemma 4 E2B — smallest / fastest' },
+    { id: 'gemini-2.5-pro',        label: 'Gemini 2.5 Pro — smartest, lowest free quota' },
+    { id: 'gemini-2.0-flash',      label: 'Gemini 2.0 Flash — older (often paid tier)' },
+    { id: 'gemma-3-27b-it',        label: 'Gemma 3 27B — availability varies' },
+    { id: 'gemma-3-12b-it',        label: 'Gemma 3 12B — availability varies' }
+  ];
+
   /* ---- Per-model daily usage tracking (localStorage) ----
    * { date: "YYYY-MM-DD", counts: { modelId: n } }. Resets at local midnight. */
   const USAGE_KEY = 'aigm:llm-usage';
@@ -272,6 +288,8 @@ const LLM = (function () {
       throw new Error((lastErr && lastErr.message ? lastErr.message : String(lastErr)) +
         '\n\n(Retried ' + MAX_RETRIES + ' times — the provider\'s API is having sustained problems. Try again in a minute.)');
     },
+    /* Selectable Gemini/Gemma model IDs for the Settings dropdown. */
+    models: function () { return GEMINI_MODELS.slice(); },
     /* Today's Gemini request usage, for the UI reminder. Returns an array of
      * { id, label, used, limit } for each model in the fallback chain. */
     geminiUsage: function () {

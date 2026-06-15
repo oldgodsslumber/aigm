@@ -26,7 +26,16 @@ Views.settings = async function (root) {
     keyInp.type = is ? 'text' : 'password';
     showKey.textContent = is ? 'Hide' : 'Show';
   });
-  const gModel = h('input', { type: 'text', value: s.geminiModel });
+  const gModelList = (LLM.models ? LLM.models() : []);
+  const gModel = h('select', null, gModelList.map(function (m) {
+    return h('option', { value: m.id }, m.label);
+  }));
+  /* keep any previously-stored value selectable (e.g. a custom id) instead of
+   * silently losing it */
+  if (s.geminiModel && !gModelList.some(function (m) { return m.id === s.geminiModel; })) {
+    gModel.insertBefore(h('option', { value: s.geminiModel }, s.geminiModel + ' (current)'), gModel.firstChild);
+  }
+  gModel.value = s.geminiModel || 'gemini-2.5-flash';
   const lUrl = h('input', { type: 'text', value: s.localUrl, placeholder: 'http://localhost:5000/v1' });
   const lModel = h('input', { type: 'text', value: s.localModel, placeholder: '(optional — server default)' });
 
