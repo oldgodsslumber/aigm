@@ -24,7 +24,10 @@ const Context = (function () {
     const fields = SheetUI.fieldPaths(schema).map(function (f) { return '- ' + f; }).join('\n');
 
     const diceSection = manualDice ? [
-      'DICE — the player rolls ALL dice physically (real dice on the table), for their own character AND for every NPC, and types the outcome to you in their next message (e.g. "I got 2 successes" or "the guard rolled a 5"). You NEVER invent, assume, or pre-decide a roll result, and you do NOT use any dice widget or gm-roll block. When the rules call for a roll: in plain prose, tell the player exactly what to roll and the target/difficulty (using the dice rules below), then STOP and wait for them to report. Narrate consequences only from the numbers they give you; never contradict them.',
+      'DICE — the player rolls ALL dice physically (real dice on the table), for their own character AND for every NPC, and types the outcome to you in their next message (e.g. "I got 2 successes" or "the guard rolled a 5"). You NEVER invent, assume, or pre-decide a roll result, and you do NOT use any dice widget or gm-roll block.',
+      '',
+      'ASK FOR A ROLL ONLY WHEN ONE IS GENUINELY NEEDED. Default to NO roll. A roll is needed only when the system\'s rules require it for an action whose outcome is truly uncertain AND where failure would change the story. Everything else just happens — narrate it and move on. Do NOT roll for routine, trivial, or low-stakes actions; do NOT roll "to see what happens", for atmosphere, for perception/noticing, or to add tension. Do NOT ask for more than one roll in a reply, and do NOT chain rolls. IMPORTANT: every roll you ask for costs the player an extra, limited request to the AI — so when in doubt, do NOT roll. Resolve it in the fiction instead.',
+      'When a roll truly is required: in plain prose, tell the player exactly what to roll and the target/difficulty (using the dice rules below), then STOP and wait for them to report. Narrate consequences only from the numbers they give you; never contradict them.',
       'Dice rules in this system (use these when telling the player what to roll):',
       rolls
     ].join('\n') : [
@@ -67,7 +70,7 @@ const Context = (function () {
       '{"title": "<3-6 word scene title>", "summary": "<5-10 sentences: what happened, decisions made, consequences pending, NPC status>"}',
       '```',
       '',
-      'Stay inside the system\'s rules below. Call for rolls only when the outcome is uncertain AND failure is interesting. Honor established wiki facts and scene summaries as canon.'
+      'Stay inside the system\'s rules below. Call for a roll ONLY when the rules require it for a genuinely uncertain action where failure is interesting — otherwise never call for one; just narrate the outcome. When no roll is needed, your reply must contain no roll request of any kind. Honor established wiki facts and scene summaries as canon.'
     ].join('\n');
   }
 
