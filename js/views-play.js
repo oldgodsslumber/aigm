@@ -459,8 +459,22 @@ Views.play = async function (root, cid) {
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
     if (block.tag === 'gm-roll') {
+      const def = rollDef(block.data.roll);
+      const manualDice = Settings.forCampaign(campaign).manualDice !== false;
+      /* Manual mode, or an unknown/garbled roll id (def missing) → don't build
+       * the dice widget (it throws on a missing def, which freezes the whole
+       * log). Show a plain prompt; the player rolls and types the result. */
+      if (manualDice || !def) {
+        const d = block.data || {};
+        return h('div', { class: 'inline-notice roll-notice' },
+          h('span', { class: 'notice-icon' }, '🎲'),
+          h('span', null,
+            h('strong', null, 'Roll called' + (d.character ? ' for ' + d.character : '')),
+            (d.roll ? ' · ' + d.roll : '') + (d.reason ? ' — ' + d.reason : '') + '. ',
+            'Roll it yourself and type the result below.'));
+      }
       return Dice.widget({
-        def: rollDef(block.data.roll), data: block.data,
+        def: def, data: block.data,
         result: (msg.rollResults || {})[bi] || null,
         onRoll: function (result) { onRollComplete(msg, bi, result); }
       });
@@ -515,7 +529,14 @@ Views.play = async function (root, cid) {
           const t = seg.text.trim();
           if (t) el.append(h('div', { class: 'narration', html: md(t) }));
         } else {
-          el.append(renderBlock(m, seg.block, bi));
+          try {
+            el.append(renderBlock(m, seg.block, bi));
+          } catch (err) {
+            console.warn('[AI GM] block render failed:', seg.block && seg.block.tag, err);
+            el.append(h('div', { class: 'inline-notice' },
+              h('span', { class: 'notice-icon' }, '⚠'),
+              h('span', null, 'A “' + (seg.block && seg.block.tag || 'GM') + '” block could not be displayed (the GM sent something malformed). The story continues below.')));
+          }
           bi++;
         }
       });
