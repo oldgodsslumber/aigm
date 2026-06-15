@@ -5,7 +5,7 @@ window.Views = window.Views || {};
 Views.play = async function (root, cid) {
   root.dataset.screenLabel = 'Play View';
   let campaign, pack, pc, scenes, scene, messages, sheetLog;
-  let busy = false, awaitingSceneSummary = false, lastError = null;
+  let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0;
 
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
@@ -37,6 +37,7 @@ Views.play = async function (root, cid) {
   const sheetBody = h('div', { class: 'sheet-body' });
   const sceneTitleEl = h('span', { class: 'scene-title' });
   const pinsEl = h('span', { class: 'scene-pins' });
+  const reqMeter = h('a', { class: 'req-meter', href: '#/settings', title: 'Gemini requests used today — click for the full breakdown' });
 
   const layoutBtn = h('button', { class: 'btn small ghost', title: 'Cycle Play View layout' }, '⊞ Layout');
   layoutBtn.addEventListener('click', function () {
@@ -63,7 +64,7 @@ Views.play = async function (root, cid) {
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, setupBtn, endSceneBtn, layoutBtn, sheetToggle)),
+      h('div', { class: 'scene-bar-actions' }, reqMeter, setupBtn, endSceneBtn, layoutBtn, sheetToggle)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
@@ -298,6 +299,7 @@ Views.play = async function (root, cid) {
   }
 
   async function runTurn(depth) {
+    if (depth === 0) turnRequests = 0; /* depth 0 = a fresh player-initiated turn; deeper = chained follow-ups */
     if (keyMissing()) { showBanner('No Gemini API key set — add yours in Settings to play.', false); return; }
     hideBanner();
     setBusy(true);
@@ -312,8 +314,11 @@ Views.play = async function (root, cid) {
         messages: messages, budget: Settings.budgetFor(settings)
       });
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });
+      turnRequests++;
+      renderRequestMeter();
       if (res.model && res.limit) {
-        Toast(res.label + ' · ' + res.used + '/' + res.limit + ' requests today');
+        Toast(res.label + ' · ' + res.used + '/' + res.limit + ' today' +
+          (turnRequests > 1 ? ' · request ' + turnRequests + ' this turn' : ''));
       }
       const parsed = Tags.parse(res.text);
       const msg = {
@@ -465,6 +470,22 @@ Views.play = async function (root, cid) {
     });
   }
 
+  /* Persistent, always-accurate request counter so multi-request turns
+   * (a lookup follow-up, a roll result) are visible — not hidden behind a
+   * toast that overwrites itself. */
+  function renderRequestMeter() {
+    const s = Settings.forCampaign(campaign);
+    if (s.backend !== 'gemini' || !LLM.geminiUsage) { reqMeter.style.display = 'none'; return; }
+    reqMeter.style.display = '';
+    const usage = LLM.geminiUsage();
+    const total = usage.reduce(function (n, u) { return n + u.used; }, 0);
+    reqMeter.textContent = '🛰 ' + total + ' today' + (turnRequests > 1 ? ' · ' + turnRequests + ' this turn' : '');
+    reqMeter.title = 'Gemini requests used today:\n' +
+      usage.map(function (u) { return '  ' + u.label + ': ' + u.used + '/' + u.limit; }).join('\n') +
+      (turnRequests ? '\n\nThis turn so far: ' + turnRequests + ' request' + (turnRequests === 1 ? '' : 's') : '') +
+      '\n\nClick for the full breakdown in Settings.';
+  }
+
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
     if (block.tag === 'gm-roll') {
@@ -603,5 +624,6 @@ Views.play = async function (root, cid) {
   renderHeader();
   renderSheet();
   renderLog();
+  renderRequestMeter();
   if (keyMissing() && messages.length) showBanner('No Gemini API key set — add yours in Settings to play.', false);
 };
