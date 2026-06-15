@@ -49,6 +49,8 @@ Views.play = async function (root, cid) {
   sheetToggle.addEventListener('click', function () { play.classList.toggle('sheet-open'); });
   const endSceneBtn = h('button', { class: 'btn small' }, 'End scene');
   endSceneBtn.addEventListener('click', endScene);
+  const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise & boundaries' }, 'Story setup');
+  setupBtn.addEventListener('click', editStorySetup);
 
   const sheetPanel = h('aside', { class: 'sheet-panel' },
     h('div', { class: 'sheet-head' },
@@ -61,7 +63,7 @@ Views.play = async function (root, cid) {
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, endSceneBtn, layoutBtn, sheetToggle)),
+      h('div', { class: 'scene-bar-actions' }, setupBtn, endSceneBtn, layoutBtn, sheetToggle)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
@@ -194,11 +196,38 @@ Views.play = async function (root, cid) {
     runTurn(0);
   }
 
-  async function begin() {
-    await Store.addMessage(cid, {
-      role: 'info', sceneId: scene.id,
-      content: 'SYSTEM: The player is ready. Open the first scene of the campaign — set the stage, then hand them a situation.'
+  function editStorySetup() {
+    const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
+    const premiseTa = h('textarea', { rows: '5', placeholder: 'Where does the story start? What\'s the situation, the hook, the job?' }, campaign.premise || '');
+    const boundsTa = h('textarea', { rows: '4', placeholder: 'Tone, content to keep in or out — e.g. "pulpy and fun, fade to black on gore, no harm to children".' }, campaign.boundaries || '');
+    const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
+    saveBtn.addEventListener('click', async function () {
+      campaign.premise = premiseTa.value.trim();
+      campaign.boundaries = boundsTa.value.trim();
+      await Store.saveCampaign(campaign);
+      if (pc) { pc.description = charTa.value.trim(); await Store.saveCharacter(cid, pc); }
+      Modal.close();
+      Toast('Setup saved — the GM will use it from the next reply.');
     });
+    Modal.open(h('div', null,
+      h('h2', null, 'Story & character setup'),
+      h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override the system\'s default tone.'),
+      pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
+      h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
+      h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa),
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), saveBtn)));
+  }
+
+  async function begin() {
+    const hasPremise = campaign.premise && campaign.premise.trim();
+    const wiki = await Store.listWiki(cid);
+    const cast = wiki.filter(function (e) { return !e.mergedInto && e.createdBy === 'player'; });
+    let open = 'SYSTEM: The player is ready. Open the first scene of the campaign — set the stage, then hand them a situation.';
+    if (hasPremise) open += ' Build the opening directly from the PREMISE the player set up; do not invent a different hook.';
+    if (cast.length) open += ' The player has pre-established this cast — work them in naturally as they fit: ' +
+      cast.map(function (e) { return e.name; }).join(', ') + '.';
+    await Store.addMessage(cid, { role: 'info', sceneId: scene.id, content: open });
     messages = await Store.listMessages(cid);
     runTurn(0);
   }
@@ -213,6 +242,8 @@ Views.play = async function (root, cid) {
       const asm = Context.assemble({
         pack: pack, schema: pack.sheetSchema, character: pc,
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
+        premise: campaign.premise, boundaries: campaign.boundaries,
+        manualDice: settings.manualDice !== false,
         messages: messages, budget: Settings.budgetFor(settings)
       });
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });

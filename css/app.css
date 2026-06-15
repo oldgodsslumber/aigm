@@ -194,6 +194,15 @@ main { min-height: calc(100vh - 52px); }
 .modal-box:has(.modal-wide) { max-width: 720px; }
 .modal-actions { display: flex; gap: 10px; justify-content: flex-end; margin-top: 18px; flex-wrap: wrap; }
 
+.create-section { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--line); }
+.create-section h3 { margin: 0 0 2px; font-size: 16px; }
+.cast-list { display: flex; flex-direction: column; gap: 10px; margin: 10px 0; }
+.cast-row { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--line);
+            border-radius: 8px; background: var(--surface-2, rgba(255,255,255,.02)); }
+.cast-row-head { display: flex; gap: 6px; align-items: center; }
+.cast-row-head input { flex: 1 1 auto; }
+.cast-row-head select { flex: 0 0 auto; width: auto; }
+
 #toast {
   position: fixed;
   bottom: 24px; left: 50%;

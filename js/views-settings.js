@@ -31,6 +31,8 @@ Views.settings = async function (root) {
   const lModel = h('input', { type: 'text', value: s.localModel, placeholder: '(optional — server default)' });
 
   const budget = h('input', { type: 'number', value: s.tokenBudget || '', placeholder: 'auto' });
+  const diceChk = h('input', { type: 'checkbox' });
+  diceChk.checked = s.manualDice !== false;
   const temp = h('input', { type: 'range', min: '0', max: '1.5', step: '0.05', value: s.temperature });
   const tempVal = h('span', { class: 'range-val' }, String(s.temperature));
   temp.addEventListener('input', function () { tempVal.textContent = temp.value; });
@@ -96,6 +98,7 @@ Views.settings = async function (root) {
       localModel: lModel.value.trim(),
       tokenBudget: Number(budget.value) || 0,
       temperature: Number(temp.value),
+      manualDice: diceChk.checked,
       layout: layoutSel.value
     });
     Toast('Settings saved.');
@@ -129,7 +132,9 @@ Views.settings = async function (root) {
       row('Backend', backendSel),
       geminiFields, localFields,
       row('Token budget', budget, 'Leave empty for auto: ~12k for local models, ~32k for Gemini.'),
-      row('Temperature', h('div', { class: 'inline-pair' }, temp, tempVal))),
+      row('Temperature', h('div', { class: 'inline-pair' }, temp, tempVal)),
+      row('Dice', h('label', { class: 'inline-pair' }, diceChk, h('span', null, 'I roll my own dice and report results')),
+        'On: the GM tells you what to roll and waits for you to type the result (for you and NPCs). Off: use the in-app dice widget.')),
     campaigns.length ? h('section', { class: 'settings-card' },
       h('h2', null, 'Per-campaign backend'),
       h('p', { class: 'card-sub' }, 'Override the global backend for individual campaigns.'),

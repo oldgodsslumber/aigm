@@ -99,6 +99,39 @@ Views.campaigns = async function (root) {
     });
     fillTemplates();
 
+    const charDescTa = h('textarea', { rows: '3', placeholder: 'Who are you? Name aside — background, look, personality, what you\'re good at, what you want. Plain text; the GM reads this.' });
+
+    /* story setup */
+    const premiseTa = h('textarea', { rows: '4', placeholder: 'Where does the story start? The situation, the hook, the job. Leave blank to let the GM open cold.' });
+    const boundsTa = h('textarea', { rows: '3', placeholder: 'Tone and content limits — e.g. "pulpy and fun, fade to black on gore, no harm to children".' });
+
+    /* pre-seeded cast (NPCs / key characters) — saved as wiki entries pinned
+     * to scene 1 so the GM knows them from the opening. */
+    const castWrap = h('div', { class: 'cast-list' });
+    const castRows = [];
+    function addCastRow() {
+      const nameI = h('input', { type: 'text', placeholder: 'Name' });
+      const typeS = h('select', null,
+        h('option', { value: 'npc' }, 'NPC'),
+        h('option', { value: 'faction' }, 'Faction'),
+        h('option', { value: 'location' }, 'Location'),
+        h('option', { value: 'item' }, 'Item'));
+      const descI = h('input', { type: 'text', placeholder: 'Who/what they are — one or two lines the GM should know' });
+      const del = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Remove' }, '×');
+      const rowEl = h('div', { class: 'cast-row' },
+        h('div', { class: 'cast-row-head' }, nameI, typeS, del), descI);
+      const ref = { name: nameI, type: typeS, desc: descI, el: rowEl };
+      del.addEventListener('click', function () {
+        const i = castRows.indexOf(ref);
+        if (i >= 0) castRows.splice(i, 1);
+        rowEl.remove();
+      });
+      castRows.push(ref);
+      castWrap.append(rowEl);
+    }
+    const addCastBtn = h('button', { class: 'btn small', type: 'button' }, '+ Add character / NPC');
+    addCastBtn.addEventListener('click', addCastRow);
+
     const create = h('button', { class: 'btn accent' }, 'Create campaign');
     create.addEventListener('click', async function () {
       const name = nameInp.value.trim();
@@ -109,6 +142,7 @@ Views.campaigns = async function (root) {
       const uid = Store.uid();
       const cid = await Store.saveCampaign({
         name: name, ownerUid: uid, members: [uid], packId: pack.id,
+        premise: premiseTa.value.trim(), boundaries: boundsTa.value.trim(),
         settings: {}, currentSceneId: null, createdAt: Date.now()
       });
       let sheet = SheetUI.newSheet(pack.sheetSchema);
@@ -118,10 +152,23 @@ Views.campaigns = async function (root) {
         });
       }
       await Store.saveCharacter(cid, {
-        name: charName, isNPC: false, packId: pack.id, sheetState: sheet, createdAt: Date.now()
+        name: charName, isNPC: false, packId: pack.id, sheetState: sheet,
+        description: charDescTa.value.trim(), createdAt: Date.now()
       });
+      /* pre-seeded cast → wiki entries, pinned to scene 1 so the GM has them
+       * from the very first reply */
+      const pinnedEntryIds = [];
+      for (const r of castRows) {
+        const cn = r.name.value.trim();
+        if (!cn) continue;
+        const id = await Store.saveWiki(cid, {
+          type: r.type.value || 'npc', name: cn, aliases: [], tags: [],
+          body: r.desc.value.trim(), createdBy: 'player', mergedInto: null
+        });
+        pinnedEntryIds.push(id);
+      }
       const sceneId = await Store.saveScene(cid, {
-        title: 'Scene 1', summary: '', status: 'active', pinnedEntryIds: [], startedAt: Date.now()
+        title: 'Scene 1', summary: '', status: 'active', pinnedEntryIds: pinnedEntryIds, startedAt: Date.now()
       });
       const camp = await Store.getCampaign(cid);
       camp.currentSceneId = sceneId;
@@ -130,12 +177,22 @@ Views.campaigns = async function (root) {
       location.hash = '#/play/' + cid;
     });
 
-    Modal.open(h('div', null,
+    Modal.open(h('div', { class: 'create-campaign' },
       h('h2', null, 'New campaign'),
       h('label', { class: 'form-row' }, h('span', null, 'Campaign name'), nameInp),
       h('label', { class: 'form-row' }, h('span', null, 'System pack'), packSel),
       h('label', { class: 'form-row' }, h('span', null, 'Character'), tplSel),
       h('label', { class: 'form-row' }, h('span', null, 'Character name'), charInp),
+      h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charDescTa),
+      h('div', { class: 'create-section' },
+        h('h3', null, 'Story setup'),
+        h('p', { class: 'card-sub' }, 'Optional, but this is how you tell the GM what story you want and what to keep in or out.'),
+        h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
+        h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa)),
+      h('div', { class: 'create-section' },
+        h('h3', null, 'Cast'),
+        h('p', { class: 'card-sub' }, 'Pre-establish NPCs, factions, or places. They\'re pinned to the first scene so the GM knows them from the start.'),
+        castWrap, addCastBtn),
       h('div', { class: 'modal-actions' },
         h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), create)
     ));

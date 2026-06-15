@@ -165,6 +165,7 @@ const Settings = (function () {
     localModel: '',
     tokenBudget: 0,               // 0 = auto (per backend)
     temperature: 0.9,
+    manualDice: true,             // true = player rolls own dice & reports results; false = in-app dice widget
     layout: 'sheet-right'         // 'sheet-right' | 'sheet-left' | 'focus'
   };
   function read() {

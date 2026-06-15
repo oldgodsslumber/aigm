@@ -11,7 +11,8 @@ const Context = (function () {
 
   function est(s) { return Math.ceil(String(s || '').length / 4); }
 
-  function protocolPrompt(pack, schema) {
+  function protocolPrompt(pack, schema, opts) {
+    const manualDice = !opts || opts.manualDice !== false; /* default: player rolls */
     const rolls = (pack.rollDefinitions || []).map(function (r) {
       let p = '';
       if (r.type === 'target-number') p = 'params: modifier, difficulty';
@@ -22,18 +23,26 @@ const Context = (function () {
     }).join('\n');
     const fields = SheetUI.fieldPaths(schema).map(function (f) { return '- ' + f; }).join('\n');
 
-    return [
-      'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.',
-      '',
-      'You interact with the game app through fenced blocks embedded in your replies. The app parses them and renders real UI. Use them exactly as specified — valid JSON, one object per block.',
-      '',
+    const diceSection = manualDice ? [
+      'DICE — the player rolls ALL dice physically (real dice on the table), for their own character AND for every NPC, and types the outcome to you in their next message (e.g. "I got 2 successes" or "the guard rolled a 5"). You NEVER invent, assume, or pre-decide a roll result, and you do NOT use any dice widget or gm-roll block. When the rules call for a roll: in plain prose, tell the player exactly what to roll and the target/difficulty (using the dice rules below), then STOP and wait for them to report. Narrate consequences only from the numbers they give you; never contradict them.',
+      'Dice rules in this system (use these when telling the player what to roll):',
+      rolls
+    ].join('\n') : [
       'DICE — you NEVER invent roll results. All rolls, including rolls for NPCs, are made by the player clicking a real dice widget. When the rules call for a roll, emit:',
       '```gm-roll',
       '{"roll": "<roll id>", "character": "<who rolls>", "reason": "<one line>", "params": {<see below>}}',
       '```',
       'Available rolls in this system:',
       rolls,
-      'Include at most ONE gm-roll per reply, then STOP narrating and wait. The result arrives as a ```roll-result``` block in the next player message; narrate consequences from its numbers, never contradict them.',
+      'Include at most ONE gm-roll per reply, then STOP narrating and wait. The result arrives as a ```roll-result``` block in the next player message; narrate consequences from its numbers, never contradict them.'
+    ].join('\n');
+
+    return [
+      'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.',
+      '',
+      'You interact with the game app through fenced blocks embedded in your replies. The app parses them and renders real UI. Use them exactly as specified — valid JSON, one object per block.',
+      '',
+      diceSection,
       '',
       'SHEET CHANGES — when the rules change a character\'s sheet (damage, spent resources, new gear), emit a field-level diff. It auto-applies with an undo button, so be precise:',
       '```gm-sheet',
@@ -83,17 +92,40 @@ const Context = (function () {
     return 'user'; /* player, roll-result, info, lookup-result */
   }
 
-  /* opts: {pack, schema, character, scenes, currentSceneId, wiki, messages, budget}
+  /* opts: {pack, schema, character, scenes, currentSceneId, wiki, premise,
+   *        boundaries, manualDice, messages, budget}
    * Returns {system, messages, stats} */
   function assemble(opts) {
     const budget = opts.budget || 16000;
     const parts = [];
-    const protocol = protocolPrompt(opts.pack, opts.schema);
+    const protocol = protocolPrompt(opts.pack, opts.schema, { manualDice: opts.manualDice });
     const rules = 'SYSTEM RULES\n' + opts.pack.gmPrompt;
-    const sheet = 'CURRENT SHEET (live — trust these numbers)\n' +
+    const bio = opts.character.description && String(opts.character.description).trim()
+      ? 'WHO THIS CHARACTER IS (the player\'s own words):\n' + String(opts.character.description).trim() + '\n\n'
+      : '';
+    const sheet = 'CURRENT SHEET (live — trust these numbers)\n' + bio +
       SheetUI.describeSheet(opts.schema, opts.character.sheetState, opts.character.name);
-    parts.push(protocol, rules, sheet);
-    let used = est(protocol) + est(rules) + est(sheet);
+    parts.push(protocol, rules);
+    let used = est(protocol) + est(rules);
+
+    /* 2a. story setup — premise + boundaries the player defined for THIS
+     * campaign. Always included (high priority); boundaries are hard limits
+     * that override the system's default genre tone. */
+    const setupLines = [];
+    if (opts.premise && String(opts.premise).trim()) {
+      setupLines.push('PREMISE / STARTING SITUATION (the player set this up — build the story from it):\n' + String(opts.premise).trim());
+    }
+    if (opts.boundaries && String(opts.boundaries).trim()) {
+      setupLines.push('TONE & BOUNDARIES (HARD CONSTRAINTS — always obey; these override the system\'s default tone and any genre convention):\n' + String(opts.boundaries).trim());
+    }
+    if (setupLines.length) {
+      const setup = setupLines.join('\n\n');
+      parts.push(setup);
+      used += est(setup);
+    }
+
+    parts.push(sheet);
+    used += est(sheet);
 
     /* reserve space for transcript */
     const reserve = Math.min(Math.floor(budget * 0.35), 6000);
