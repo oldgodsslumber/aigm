@@ -133,14 +133,33 @@ const LLM = (function () {
   async function callGeminiModel(settings, model, system, messages) {
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(settings.geminiKey);
+
+    /* Gemma models on the Gemini API are not part of the tunable-safety system
+     * and are not in the structured-output model set (per Google's docs). They
+     * accept systemInstruction, but to be maximally robust we fold the system
+     * prompt into the first user turn for Gemma and omit safetySettings — both
+     * are Gemini-only features whose presence can make a Gemma call fail. */
+    const isGemma = /^gemma/i.test(model);
+
+    const contents = messages.map(function (m) {
+      return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
+    });
+
     const body = {
-      systemInstruction: { parts: [{ text: system }] },
-      contents: messages.map(function (m) {
-        return { role: m.role === 'assistant' ? 'model' : 'user', parts: [{ text: m.content }] };
-      }),
-      generationConfig: { temperature: settings.temperature, maxOutputTokens: 2048 },
-      safetySettings: SAFETY_OFF
+      contents: contents,
+      generationConfig: { temperature: settings.temperature, maxOutputTokens: 2048 }
     };
+
+    if (system) {
+      if (isGemma) {
+        const firstUser = contents.find(function (c) { return c.role === 'user'; });
+        if (firstUser) firstUser.parts.unshift({ text: system + '\n\n' });
+        else contents.unshift({ role: 'user', parts: [{ text: system }] });
+      } else {
+        body.systemInstruction = { parts: [{ text: system }] };
+      }
+    }
+    if (!isGemma) body.safetySettings = SAFETY_OFF;
     let res;
     try {
       res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
