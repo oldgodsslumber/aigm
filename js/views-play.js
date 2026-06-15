@@ -376,7 +376,16 @@ Views.play = async function (root, cid) {
       });
       messages = await Store.listMessages(cid);
       renderLog();
-      await runTurn(depth + 1);
+      /* Only spend another Gemini request if the GM's reply was essentially
+       * just the lookup (little or no narration yet). If it already wrote a
+       * full response, the looked-up facts ride into the next player turn's
+       * context for free instead of triggering an immediate follow-up call. */
+      const narration = Tags.parse(msg.content).segments
+        .filter(function (s) { return s.type === 'text'; })
+        .map(function (s) { return (s.text || '').trim(); }).join(' ').trim();
+      if (narration.length < 40) {
+        await runTurn(depth + 1);
+      }
     }
   }
 
