@@ -435,11 +435,10 @@ Views.play = async function (root, cid) {
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
     if (block.tag === 'gm-wiki') {
-      /* A hidden entry is GM-only — don't reveal its name/type in the log. */
-      if (meta.hidden || block.data.hidden === true) {
-        return h('div', { class: 'inline-notice wiki-notice' },
-          h('span', { class: 'notice-icon' }, '🔒'),
-          h('span', null, 'The GM noted something only it knows.'));
+      /* Hidden or secret writes are GM-only — show nothing at all in the log,
+       * not even a placeholder, so the player gets no hint a secret was set. */
+      if (meta.hidden || block.data.hidden === true || (block.data.secret && String(block.data.secret).trim())) {
+        return h('span', { style: 'display:none' });
       }
       return h('div', { class: 'inline-notice wiki-notice' },
         h('span', { class: 'notice-icon' }, '✦'),

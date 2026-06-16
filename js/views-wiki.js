@@ -86,45 +86,107 @@ Views.wiki = async function (root, cid) {
     return entries.some(function (e) { return !e.mergedInto && e.type === 'plan'; });
   }
 
-  /* Extract wiki-entry objects from a model reply. The generators ask for a
-   * strict JSON array (and force JSON mode on Gemini). We accept: a bare JSON
-   * array/object, a JSON array inside a ```fence```, a {"entries":[...]} wrapper,
-   * or — as a last resort — gm-wiki fenced blocks. We deliberately do NOT scrape
-   * loose {...} out of prose, which previously turned a raw model dump into junk
-   * entries. Returns an array of entry data objects (each has a name). */
-  function parseWikiBlocks(text) {
-    const valid = function (arr) {
-      return Array.isArray(arr)
-        ? arr.filter(function (o) { return o && typeof o === 'object' && !Array.isArray(o) && o.name; })
-        : [];
-    };
-    const fromValue = function (v) {
-      if (Array.isArray(v)) return valid(v);
-      if (v && typeof v === 'object') {
-        if (Array.isArray(v.entries)) return valid(v.entries);
-        if (v.name) return valid([v]);
+  /* Robustly turn ANY model reply into clean entry objects — we don't trust the
+   * model to format well (weak free models dump prose, markdown, partial JSON).
+   * Strategy: try strict JSON, then an array substring, then a balanced-brace
+   * scan that pulls every {...} object out of prose, then gm-wiki fences. Every
+   * candidate is run through sanitizeEntry, which is what actually "cleans"
+   * the data: valid type, trimmed name, array aliases/tags, de-marked + capped
+   * body. Anything without a usable name is dropped (never dumped raw). */
+  const ENTRY_TYPES = ['pc', 'npc', 'location', 'faction', 'item', 'event', 'plan'];
+
+  function relaxedParse(s) {
+    try { return JSON.parse(s); } catch (e) { /* retry */ }
+    try { return JSON.parse(String(s).replace(/,\s*([}\]])/g, '$1')); } catch (e) { return undefined; }
+  }
+
+  /* pull out every top-level {...} object, respecting strings/escapes */
+  function scanObjects(s) {
+    const out = [];
+    let depth = 0, start = -1, inStr = false, esc = false, q = '';
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === q) inStr = false;
+        continue;
       }
-      return [];
+      if (c === '"' || c === "'") { inStr = true; q = c; }
+      else if (c === '{') { if (depth === 0) start = i; depth++; }
+      else if (c === '}') { if (depth > 0) { depth--; if (depth === 0 && start >= 0) { out.push(s.slice(start, i + 1)); start = -1; } } }
+    }
+    return out;
+  }
+
+  function toArr(v) {
+    let list = [];
+    if (Array.isArray(v)) list = v;
+    else if (typeof v === 'string') list = v.split(',');
+    return list.map(function (x) { return String(x == null ? '' : x).replace(/\s+/g, ' ').trim(); })
+      .filter(Boolean).slice(0, 12);
+  }
+
+  function sanitizeEntry(o) {
+    if (!o || typeof o !== 'object' || Array.isArray(o)) return null;
+    const name = String(o.name == null ? '' : o.name).replace(/\s+/g, ' ').trim();
+    if (!name || name.length > 100) return null; // no name / a sentence, not an entry
+    let type = String(o.type == null ? '' : o.type).toLowerCase().trim();
+    if (ENTRY_TYPES.indexOf(type) < 0) type = 'npc';
+    const cleanText = function (val, cap) {
+      let s = String(val == null ? '' : val)
+        .replace(/```[\s\S]*?```/g, ' ')   // drop code fences
+        .replace(/[ \t]+/g, ' ')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+      if (s.length > cap) s = s.slice(0, cap).trim() + '…';
+      return s;
+    };
+    const out = { type: type, name: name, aliases: toArr(o.aliases), tags: toArr(o.tags), body: cleanText(o.body, 2000) };
+    if (o.hidden === true || o.hidden === 'true') out.hidden = true;
+    const secret = cleanText(o.secret, 2000);
+    if (secret) out.secret = secret;
+    return out;
+  }
+
+  function parseWikiBlocks(text) {
+    const candidates = [];
+    const addFrom = function (v) {
+      if (Array.isArray(v)) v.forEach(addFrom);
+      else if (v && typeof v === 'object') {
+        if (Array.isArray(v.entries)) v.entries.forEach(addFrom);
+        else candidates.push(v);
+      }
     };
 
     let t = String(text || '').trim();
-    /* strip a single wrapping code fence if present */
     const fence = t.match(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/i);
     if (fence) t = fence[1].trim();
 
-    /* whole thing as JSON */
-    try { const got = fromValue(JSON.parse(t)); if (got.length) return got; } catch (e) { /* fall through */ }
+    /* 1. whole reply as JSON */
+    const whole = relaxedParse(t);
+    if (whole !== undefined) addFrom(whole);
 
-    /* the first [...] array substring (tolerates stray prose around it) */
-    const open = t.indexOf('['), close = t.lastIndexOf(']');
-    if (open >= 0 && close > open) {
-      try { const got = valid(JSON.parse(t.slice(open, close + 1))); if (got.length) return got; } catch (e) { /* fall through */ }
+    /* 2. the first [...] array substring */
+    if (!candidates.length) {
+      const open = t.indexOf('['), close = t.lastIndexOf(']');
+      if (open >= 0 && close > open) { const arr = relaxedParse(t.slice(open, close + 1)); if (arr !== undefined) addFrom(arr); }
     }
 
-    /* last resort: the model used gm-wiki fences after all */
-    return Tags.parse(text).blocks
-      .filter(function (b) { return b.tag === 'gm-wiki'; })
-      .map(function (b) { return b.data; });
+    /* 3. every balanced {...} object found anywhere in the text */
+    if (!candidates.length) {
+      scanObjects(t).forEach(function (chunk) { const o = relaxedParse(chunk); if (o !== undefined) addFrom(o); });
+    }
+
+    /* 4. gm-wiki fenced blocks, if the model used them */
+    if (!candidates.length) {
+      Tags.parse(text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; })
+        .forEach(function (b) { addFrom(b.data); });
+    }
+
+    const cleaned = [];
+    candidates.forEach(function (o) { const s = sanitizeEntry(o); if (s) cleaned.push(s); });
+    return cleaned;
   }
 
   /* Name/alias-based upsert: update an existing entry if the name matches,
