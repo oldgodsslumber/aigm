@@ -523,10 +523,11 @@ Views.play = async function (root, cid) {
       const el = h('div', { class: 'msg msg-gm' });
       const parsed = Tags.parse(m.content);
       let bi = 0;
+      let narration = '';
       parsed.segments.forEach(function (seg) {
         if (seg.type === 'text') {
           const t = seg.text.trim();
-          if (t) el.append(h('div', { class: 'narration', html: md(t) }));
+          if (t) { el.append(h('div', { class: 'narration', html: md(t) })); narration += (narration ? '\n\n' : '') + t; }
         } else {
           try {
             el.append(renderBlock(m, seg.block, bi));
@@ -540,6 +541,16 @@ Views.play = async function (root, cid) {
         }
       });
       const actions = h('div', { class: 'msg-actions' });
+      if (Speech.supported() && narration.trim()) {
+        const readBtn = h('button', { class: 'btn small ghost', title: 'Read this pass aloud' }, '🔊 Read');
+        readBtn.addEventListener('click', function () {
+          if (Speech.speaking() && readBtn.dataset.playing) { Speech.stop(); return; }
+          readBtn.textContent = '⏹ Stop';
+          readBtn.dataset.playing = '1';
+          Speech.speak(narration, { onend: function () { readBtn.textContent = '🔊 Read'; delete readBtn.dataset.playing; } });
+        });
+        actions.append(readBtn);
+      }
       const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
       editBtn.addEventListener('click', function () { editMessage(m); });
       actions.append(editBtn);
