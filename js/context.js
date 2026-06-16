@@ -146,30 +146,6 @@ const Context = (function () {
     return lines.join('\n');
   }
 
-  /* System prompt for regenerating ONE existing wiki entry (the Regenerate
-   * button on a card). Keeps the name; rewrites body/aliases/tags. */
-  function entryPrompt(opts) {
-    opts = opts || {};
-    const name = String(opts.name || '').trim();
-    let lines = [
-      'You are a worldbuilding archivist for a tabletop RPG campaign. Write ONE wiki entry for the entity named below. This is NOT a scene — do NOT narrate, address the player, or add any commentary.',
-      'Entity: "' + name + '"' + (opts.type ? ' — type: ' + opts.type : ''),
-      (opts.grounded
-        ? 'Use the Google Search results available to you to keep facts accurate and current; record facts only, no URLs or mention of searching.'
-        : 'Draw on your knowledge; prefer well-established, canonical facts; if unsure of a detail keep it general rather than inventing.')
-    ];
-    if (opts.instruction && String(opts.instruction).trim()) {
-      lines.push('Player guidance for this entry (follow it): ' + String(opts.instruction).trim());
-    }
-    lines.push('Respond with ONLY a single JSON object — no prose, no markdown, no code fences: ' +
-      '{"type": "' + (opts.type || 'npc') + '", "name": "' + name + '", "aliases": ["<other names>"], "tags": ["<topics>"], "body": "<2-5 sentences of durable facts>"}.');
-    const world = [];
-    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
-    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
-    if (world.length) lines = lines.concat(['', 'World context:', world.join('\n')]);
-    return lines.join('\n');
-  }
-
   /* System prompt for the Wiki tab's "AI Plan" / "Update plan" buttons.
    * Designs a hidden, Monster of the Week-style threat plan: a 6-step
    * countdown plus supporting secrets, all filed as hidden wiki entries the
@@ -390,5 +366,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, entryPrompt: entryPrompt, planPrompt: planPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, planPrompt: planPrompt, est: est };
 })();

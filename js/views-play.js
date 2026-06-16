@@ -6,7 +6,7 @@ window.Views = window.Views || {};
 Views.play = async function (root, cid) {
   root.dataset.screenLabel = 'Play View';
   let campaign, pc, scenes, scene, messages;
-  let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0;
+  let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0, lastGmId = null;
 
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
@@ -235,6 +235,34 @@ Views.play = async function (root, cid) {
     runTurn(0);
   }
 
+  /* edit a GM reply's text in place (fix a wrong detail by hand) */
+  function editMessage(m) {
+    const ta = h('textarea', { rows: '12', class: 'edit-msg-input' }, m.content);
+    const save = h('button', { class: 'btn accent' }, 'Save');
+    save.addEventListener('click', async function () {
+      m.content = ta.value;
+      await Store.updateMessage(cid, m);
+      messages = await Store.listMessages(cid);
+      Modal.close();
+      renderLog();
+    });
+    Modal.open(h('div', { class: 'modal-wide' },
+      h('h2', null, 'Edit the scene'),
+      h('p', { class: 'card-sub' }, 'Edit the GM\'s text directly. Any fenced blocks (wiki, scene) are shown as written — leave them intact unless you mean to change them.'),
+      ta,
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), save)));
+  }
+
+  /* regenerate the latest GM reply: rewind to the trigger and re-run the turn */
+  async function regenerateGm(m) {
+    if (busy) return;
+    await Store.truncateFrom(cid, m.id);
+    messages = await Store.listMessages(cid);
+    renderLog();
+    runTurn(0);
+  }
+
   async function runTurn(depth) {
     if (depth === 0) turnRequests = 0; /* depth 0 = a fresh player-initiated turn; deeper = chained follow-ups */
     if (keyMissing()) { showBanner('No Gemini API key set — add yours in Settings to play.', false); return; }
@@ -456,6 +484,16 @@ Views.play = async function (root, cid) {
           bi++;
         }
       });
+      const actions = h('div', { class: 'msg-actions' });
+      const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
+      editBtn.addEventListener('click', function () { editMessage(m); });
+      actions.append(editBtn);
+      if (m.id === lastGmId) {
+        const regenBtn = h('button', { class: 'btn small ghost' }, '↻ Regenerate');
+        regenBtn.addEventListener('click', function () { regenerateGm(m); });
+        actions.append(regenBtn);
+      }
+      el.append(actions);
       return el;
     }
     if (m.role === 'info') {
@@ -475,6 +513,11 @@ Views.play = async function (root, cid) {
 
   function renderLog() {
     logEl.innerHTML = '';
+    /* the most recent GM reply can be regenerated (redone in place) */
+    lastGmId = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'gm') { lastGmId = messages[i].id; break; }
+    }
     if (!messages.length) {
       const beginBtn = h('button', { class: 'btn accent' }, 'Begin the adventure');
       beginBtn.addEventListener('click', begin);

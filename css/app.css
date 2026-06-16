@@ -284,6 +284,8 @@ main { min-height: calc(100vh - 52px); }
 /* messages */
 .msg { max-width: 720px; width: 100%; margin: 0 auto; }
 .msg-gm { display: grid; gap: 12px; }
+.msg-actions { display: flex; gap: 6px; opacity: 0.6; transition: opacity .12s; }
+.msg-gm:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
 .narration { font-family: var(--serif); font-size: 17.5px; line-height: 1.7; color: var(--ink); }
 .narration p { margin: 0 0 0.85em; text-wrap: pretty; }
 .narration p:last-child { margin-bottom: 0; }
@@ -555,7 +557,6 @@ main { min-height: calc(100vh - 52px); }
 .page-head-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .hidden-toggle.on { background: #5a3a3a; color: #f4dede; border-color: #7a4a4a; }
 .wiki-card.hidden { opacity: 0.72; border-style: dashed; }
-.wiki-card-actions { display: flex; gap: 6px; margin-top: 4px; }
 .wiki-hidden-badge { font-family: var(--mono); font-size: 11px; color: #e0a0a0; border: 1px solid #7a4a4a; border-radius: 99px; padding: 1px 8px; }
 .hidden-row { margin-top: 12px; align-items: flex-start; gap: 8px; }
 .wiki-secret-preview { font-family: var(--mono); font-size: 12.5px; color: #e0a0a0; margin: 6px 0 0; }
