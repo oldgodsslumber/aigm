@@ -60,6 +60,44 @@ Views.play = async function (root, cid) {
   });
 
   /* ---------- helpers ---------- */
+  /* Strip a weak model's chain-of-thought / planning dump, keeping only the
+   * final narration. The real reply is the prose AFTER the last scratchpad
+   * marker line (echoed prompt bullets, "Label:*" planning, self-checks).
+   * Any gm-* fenced blocks are preserved so wiki/scene handling still works. */
+  function stripScratchpad(text) {
+    const raw = String(text || '');
+    const fences = raw.match(/```gm-[a-z]+[\s\S]*?```/g) || [];
+    /* don't touch a reply that already used the proper block protocol cleanly */
+    const lines = raw.replace(/```gm-[a-z]+[\s\S]*?```/g, '').split(/\r?\n/);
+    const isMeta = function (ln) {
+      const s = ln.trim();
+      if (!s) return false;
+      if (/^[\*\-•]\s/.test(s)) return true;                                   // bullet list
+      if (/^#{1,6}\s/.test(s)) return true;                                    // markdown header
+      if (/\?\s*(yes|no)\b/i.test(s)) return true;                             // self-check "...? Yes"
+      if (/^[A-Z][A-Za-z ’'\/]{0,28}:\*/.test(s)) return true;                 // "Opening:* ...", "The Shift:* ..."
+      if (/^(scene|action|antagonists?|hook|opening|the shift|the encounter|idea|setup|setting|notes?|beats?|plan|goal|checklist|approach|structure)\b[^.!?]{0,40}:/i.test(s)) return true;
+      return false;
+    };
+    let lastMeta = -1;
+    for (let i = 0; i < lines.length; i++) if (isMeta(lines[i])) lastMeta = i;
+
+    let out = raw;
+    if (lastMeta >= 0) {
+      const tail = lines.slice(lastMeta + 1).join('\n').trim();
+      if (tail.length >= 60) out = tail;
+      else {
+        const kept = lines.filter(function (ln) { return !isMeta(ln); }).join('\n').trim();
+        out = kept.length >= 60 ? kept : raw.trim();
+      }
+    } else {
+      out = raw.trim();
+    }
+    /* re-attach any structured blocks the cleaning may have removed */
+    fences.forEach(function (f) { if (out.indexOf(f) < 0) out += '\n\n' + f; });
+    return out;
+  }
+
   function setBusy(b) {
     busy = b;
     sendBtn.disabled = b;
@@ -286,9 +324,13 @@ Views.play = async function (root, cid) {
         Toast(res.label + ' · ' + res.used + '/' + res.limit + ' today' +
           (turnRequests > 1 ? ' · request ' + turnRequests + ' this turn' : ''));
       }
-      const parsed = Tags.parse(res.text);
+      /* Weak free models (Gemma) have no separate thinking channel and dump
+       * their scratchpad — echoed prompt, planning, self-checks — into the
+       * reply, with the real narration last. Strip that for those models. */
+      const replyText = /^gemma/i.test(res.model || '') ? stripScratchpad(res.text) : res.text;
+      const parsed = Tags.parse(replyText);
       const msg = {
-        role: 'gm', content: res.text, sceneId: scene.id,
+        role: 'gm', content: replyText, sceneId: scene.id,
         blocks: parsed.blocks.map(function (b) { return { tag: b.tag, data: b.data }; }),
         blockMeta: {}
       };
