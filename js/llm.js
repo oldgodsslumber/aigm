@@ -185,6 +185,11 @@ const LLM = (function () {
     if (options.thinking === false && /gemini-2\.5-flash/i.test(model)) {
       body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
     }
+    /* JSON mode — guarantees a parseable JSON reply. Gemini-only, and not
+     * combinable with grounding (search returns prose + citations). */
+    if (options.jsonMode && !isGemma && !grounding) {
+      body.generationConfig.responseMimeType = 'application/json';
+    }
 
     if (system) {
       if (isGemma) {
@@ -240,7 +245,7 @@ const LLM = (function () {
 
     /* Grounded request: pin to a Gemini model (Gemma can't search). Fall back
      * only to Flash Lite on a 429 — never to a non-grounding model. */
-    const gen = { grounding: options.grounding === true, maxTokens: options.maxTokens, thinking: options.thinking };
+    const gen = { grounding: options.grounding === true, maxTokens: options.maxTokens, thinking: options.thinking, jsonMode: options.jsonMode };
 
     if (options.grounding) {
       let active = /^gemini/i.test(chosen) ? chosen : 'gemini-2.5-flash';
@@ -323,7 +328,7 @@ const LLM = (function () {
     chat: async function (opts) {
       const s = opts.settings;
       const run = function () {
-        const gen = { grounding: opts.grounding === true, maxTokens: opts.maxTokens, thinking: opts.thinking };
+        const gen = { grounding: opts.grounding === true, maxTokens: opts.maxTokens, thinking: opts.thinking, jsonMode: opts.jsonMode === true };
         if (s.backend === 'local') return local(s, opts.system, opts.messages, gen);
         return gemini(s, opts.system, opts.messages, gen);
       };

@@ -86,37 +86,45 @@ Views.wiki = async function (root, cid) {
     return entries.some(function (e) { return !e.mergedInto && e.type === 'plan'; });
   }
 
-  /* Tolerant extraction of wiki-entry objects from a model reply. Preferred:
-   * gm-wiki fenced blocks. Fallbacks (models don't always follow the fence):
-   * any code fence containing JSON, a bare JSON array/object, or individual
-   * {...} objects embedded in prose. Returns an array of entry data objects. */
+  /* Extract wiki-entry objects from a model reply. The generators ask for a
+   * strict JSON array (and force JSON mode on Gemini). We accept: a bare JSON
+   * array/object, a JSON array inside a ```fence```, a {"entries":[...]} wrapper,
+   * or — as a last resort — gm-wiki fenced blocks. We deliberately do NOT scrape
+   * loose {...} out of prose, which previously turned a raw model dump into junk
+   * entries. Returns an array of entry data objects (each has a name). */
   function parseWikiBlocks(text) {
-    const primary = Tags.parse(text).blocks
+    const valid = function (arr) {
+      return Array.isArray(arr)
+        ? arr.filter(function (o) { return o && typeof o === 'object' && !Array.isArray(o) && o.name; })
+        : [];
+    };
+    const fromValue = function (v) {
+      if (Array.isArray(v)) return valid(v);
+      if (v && typeof v === 'object') {
+        if (Array.isArray(v.entries)) return valid(v.entries);
+        if (v.name) return valid([v]);
+      }
+      return [];
+    };
+
+    let t = String(text || '').trim();
+    /* strip a single wrapping code fence if present */
+    const fence = t.match(/```(?:json)?[ \t]*\r?\n?([\s\S]*?)```/i);
+    if (fence) t = fence[1].trim();
+
+    /* whole thing as JSON */
+    try { const got = fromValue(JSON.parse(t)); if (got.length) return got; } catch (e) { /* fall through */ }
+
+    /* the first [...] array substring (tolerates stray prose around it) */
+    const open = t.indexOf('['), close = t.lastIndexOf(']');
+    if (open >= 0 && close > open) {
+      try { const got = valid(JSON.parse(t.slice(open, close + 1))); if (got.length) return got; } catch (e) { /* fall through */ }
+    }
+
+    /* last resort: the model used gm-wiki fences after all */
+    return Tags.parse(text).blocks
       .filter(function (b) { return b.tag === 'gm-wiki'; })
       .map(function (b) { return b.data; });
-    if (primary.length) return primary;
-
-    const out = [];
-    const looksLikeEntry = function (o) { return o && typeof o === 'object' && !Array.isArray(o) && o.name; };
-    const push = function (v) {
-      if (Array.isArray(v)) v.forEach(push);
-      else if (looksLikeEntry(v)) out.push(v);
-    };
-    const tryJson = function (chunk) {
-      const s = String(chunk).trim();
-      if (!s) return;
-      try { push(JSON.parse(s)); return; } catch (e) { /* not whole-JSON */ }
-      /* pull out individual flat {...} objects (wiki entries have no nested
-       * objects — aliases/tags are arrays), tolerating prose around them */
-      const objs = s.match(/\{[^{}]*\}/g) || [];
-      objs.forEach(function (o) { try { push(JSON.parse(o)); } catch (e) { /* skip */ } });
-    };
-
-    const fence = /```[a-zA-Z-]*[ \t]*\r?\n?([\s\S]*?)```/g;
-    let m, sawFence = false;
-    while ((m = fence.exec(text)) !== null) { sawFence = true; tryJson(m[1]); }
-    if (!out.length && !sawFence) tryJson(text);
-    return out;
   }
 
   /* Name/alias-based upsert: update an existing entry if the name matches,
@@ -171,7 +179,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false, jsonMode: true });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] intake parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -214,7 +222,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false, jsonMode: true });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] topic parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -299,7 +307,7 @@ Views.wiki = async function (root, cid) {
       });
       const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
         (threatText ? '\n\n' + threatText : '');
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false, jsonMode: true });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] plan parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -309,14 +317,10 @@ Views.wiki = async function (root, cid) {
         if (r.updated) updated++; else created++;
       }
       entries = await Store.listWiki(cid);
-      /* reveal hidden entries so the GM can review what was generated */
-      showHidden = true;
-      hiddenToggle.classList.add('on');
-      hiddenToggle.textContent = '🔓 Hide GM-only';
       renderList();
       Modal.close();
       if (!datas.length) Toast('The AI returned no plan entries — try again or add a threat description.');
-      else Toast('Plan ' + (isUpdate ? 'updated' : 'created') + ': ' + created + ' hidden entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '.');
+      else Toast('Plan ' + (isUpdate ? 'updated' : 'created') + ': ' + created + ' hidden entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '. Toggle “Show hidden” to review.');
     } catch (e) {
       console.error(e);
       Toast(e.message);

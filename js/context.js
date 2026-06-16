@@ -30,6 +30,15 @@ const Context = (function () {
     '```'
   ];
 
+  /* The Wiki-tab batch generators (intake / topic / plan) ask for a strict JSON
+   * array — far more reliable to parse than custom fences, and forceable via
+   * Gemini JSON mode. Each object: type/name/aliases/tags/body (+ optional
+   * hidden/secret for the plan). */
+  const JSON_ARRAY_INSTRUCTION =
+    'Respond with ONLY a JSON array of entry objects. No prose, no commentary, no markdown, no code fences — nothing before or after the array. ' +
+    'Each object has exactly: {"type": "<one type from the list above>", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<2-5 sentences of durable facts>"}. ' +
+    'aliases and tags must be arrays (use [] if none). Example: [{"type":"npc","name":"Nick Fury","aliases":["Fury"],"tags":["S.H.I.E.L.D."],"body":"Director of S.H.I.E.L.D. ..."}]';
+
   /* Campaign format shapes the threat countdown's scale (used when designing a
    * plan) and the pacing the GM uses while advancing it during play. */
   const FORMAT_GUIDE = {
@@ -83,11 +92,13 @@ const Context = (function () {
     let lines = [
       'You are a worldbuilding archivist for a tabletop RPG campaign. The player has pasted notes about their world. This is NOT a scene and does NOT advance any plot — do NOT narrate, do NOT tell a story, do NOT address the player, and do NOT add any commentary.',
       '',
-      'Your ONLY job is to file the facts in the notes into wiki entries. Output ONLY gm-wiki fenced blocks — one block per distinct entity — and nothing else (no prose before, between, or after the blocks). Be thorough and aggressive: capture every person, place, organization, significant item, and event the notes describe. Keep distinct things in separate entries; never lump several entities into one. Put each fact in the body of the entity it belongs to.',
+      'Your ONLY job is to file the facts in the notes into wiki entries. Be thorough: capture every person, place, organization, significant item, and event the notes describe. Keep distinct things in separate entries; never lump several entities into one. Put each fact in the body of the entity it belongs to.',
       'Entry types to use:'
     ].concat(WIKI_TYPE_GUIDE).concat([
-      'Use this block format exactly (valid JSON, one object per block):'
-    ]).concat(WIKI_BLOCK_SPEC);
+      '',
+      JSON_ARRAY_INSTRUCTION,
+      'These are facts the player knows; do NOT set "hidden" or "secret".'
+    ]);
 
     const world = [];
     if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
@@ -99,7 +110,6 @@ const Context = (function () {
         'These entries already exist — REUSE the exact same name when the notes refer to them so they update instead of duplicating:',
         opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
     }
-    lines = lines.concat(['', 'These are facts the player knows; do NOT set "hidden" or "secret" on any of them.']);
     return lines.join('\n');
   }
 
@@ -115,12 +125,13 @@ const Context = (function () {
         ? 'Use the Google Search results available to you to keep names and facts accurate and current. Record facts only — do NOT cite sources, list URLs, or mention that you searched.'
         : 'Draw on your knowledge of the topic. Prefer well-established, canonical facts; if you are unsure of a specific detail, keep the entry general rather than inventing specifics.'),
       '',
-      'Cover the most important and iconic entities for the topic — aim for roughly 12 to 25 entries unless the player\'s request implies otherwise. Keep distinct things in separate entries, one block each. Entry types:'
+      'Cover the most important and iconic entities for the topic — aim for roughly 12 to 25 entries unless the player\'s request implies otherwise. Keep distinct things in separate entries. Entry types:'
     ].concat(WIKI_TYPE_GUIDE).concat([
-      'Use this block format exactly (valid JSON, one object per block):'
-    ]).concat(WIKI_BLOCK_SPEC);
+      '',
+      JSON_ARRAY_INSTRUCTION,
+      'These are facts the player knows; do NOT set "hidden" or "secret".'
+    ]);
 
-    lines = lines.concat(['', 'These are facts the player knows; do NOT set "hidden" or "secret".']);
     lines = lines.concat(['', 'TOPIC: ' + String(opts.topic || '').trim()]);
 
     const world = [];
@@ -154,13 +165,14 @@ const Context = (function () {
       '1. ONE entry of type "plan" — the COUNTDOWN. Its body states the threat, what it ultimately wants (its doom/goal), and EXACTLY SIX escalating steps it takes if the players never interfere, labelled in order: Day, Shadows, Dawn, Dusk, Sunset, Nightfall. Each step is one concrete development; the later steps are worse; Nightfall is the threat fully achieving its goal. The players do not act in this plan — it is what unfolds unopposed.',
       '2. Several SUPPORTING entries — the threat itself and its key pieces (true nature, secret motive, hidden allies, secret locations or items). Use the appropriate types (npc, faction, location, item, event). Keep distinct things in separate entries.',
       '',
-      'Keep all of this GM-ONLY. Two ways to do that:',
-      '- For things that are ENTIRELY secret (the threat itself, hidden allies, undiscovered places, and the countdown "plan" entry), emit a NEW entry with "hidden": true.',
-      '- To plant a secret about something the player ALREADY knows, emit a gm-wiki block with that entry\'s EXACT existing name and a "secret" field (do NOT set "hidden") — this keeps its public page intact while filing the twist as GM-only. Example: {"name": "Mayor Crane", "secret": "She secretly leads the cult driving the countdown."}',
+      'Keep all of this GM-ONLY. Two ways to do that, per object:',
+      '- For things that are ENTIRELY secret (the threat itself, hidden allies, undiscovered places, and the countdown — use type "plan" for it), set "hidden": true on the object.',
+      '- To plant a secret about something the player ALREADY knows, output an object with that entry\'s EXACT existing name and a "secret" field (do NOT set "hidden"), and omit or leave "body" empty so its public page is not overwritten. Example: {"name": "Mayor Crane", "secret": "She secretly leads the cult driving the countdown."}',
       'Never put a spoiler in the public "body" of an existing entry.',
       '',
-      'Output ONLY gm-wiki fenced blocks, one object per block, nothing else:'
-    ].concat(WIKI_BLOCK_SPEC);
+      JSON_ARRAY_INSTRUCTION,
+      'In addition, each object may include "hidden": true and/or "secret": "<GM-only text>". Use type "plan" for the single countdown entry.'
+    ];
 
     const world = [];
     if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
