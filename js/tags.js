@@ -7,7 +7,7 @@
  * well-formed blocks. Malformed JSON degrades to plain text and logs
  * to the console — never crashes the turn. */
 const Tags = (function () {
-  const FENCE = /```(gm-[a-z]+)[ \t]*\n([\s\S]*?)```/g;
+  const FENCE = /```(gm-[a-z]+)[ \t]*\r?\n([\s\S]*?)```/g;
   const KNOWN = ['gm-roll', 'gm-sheet', 'gm-wiki', 'gm-lookup', 'gm-scene'];
 
   function parse(text) {

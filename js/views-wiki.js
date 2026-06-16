@@ -86,6 +86,39 @@ Views.wiki = async function (root, cid) {
     return entries.some(function (e) { return !e.mergedInto && e.type === 'plan'; });
   }
 
+  /* Tolerant extraction of wiki-entry objects from a model reply. Preferred:
+   * gm-wiki fenced blocks. Fallbacks (models don't always follow the fence):
+   * any code fence containing JSON, a bare JSON array/object, or individual
+   * {...} objects embedded in prose. Returns an array of entry data objects. */
+  function parseWikiBlocks(text) {
+    const primary = Tags.parse(text).blocks
+      .filter(function (b) { return b.tag === 'gm-wiki'; })
+      .map(function (b) { return b.data; });
+    if (primary.length) return primary;
+
+    const out = [];
+    const looksLikeEntry = function (o) { return o && typeof o === 'object' && !Array.isArray(o) && o.name; };
+    const push = function (v) {
+      if (Array.isArray(v)) v.forEach(push);
+      else if (looksLikeEntry(v)) out.push(v);
+    };
+    const tryJson = function (chunk) {
+      const s = String(chunk).trim();
+      if (!s) return;
+      try { push(JSON.parse(s)); return; } catch (e) { /* not whole-JSON */ }
+      /* pull out individual flat {...} objects (wiki entries have no nested
+       * objects — aliases/tags are arrays), tolerating prose around them */
+      const objs = s.match(/\{[^{}]*\}/g) || [];
+      objs.forEach(function (o) { try { push(JSON.parse(o)); } catch (e) { /* skip */ } });
+    };
+
+    const fence = /```[a-zA-Z-]*[ \t]*\r?\n?([\s\S]*?)```/g;
+    let m, sawFence = false;
+    while ((m = fence.exec(text)) !== null) { sawFence = true; tryJson(m[1]); }
+    if (!out.length && !sawFence) tryJson(text);
+    return out;
+  }
+
   /* Name/alias-based upsert: update an existing entry if the name matches,
    * otherwise create. Mirrors the GM's in-play wiki upsert. opts.hiddenOnCreate
    * marks NEW entries hidden (used by the AI Plan flow); existing entries keep
@@ -139,16 +172,17 @@ Views.wiki = async function (root, cid) {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
       const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false });
-      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      const datas = parseWikiBlocks(res.text);
+      console.log('[wiki] intake parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
-      for (const b of blocks) {
-        const r = await upsertFromData(b.data);
+      for (const d of datas) {
+        const r = await upsertFromData(d);
         if (!r) continue;
         if (r.updated) updated++; else created++;
       }
       entries = await Store.listWiki(cid);
       renderList();
-      if (!blocks.length) {
+      if (!datas.length) {
         intakeStatus.textContent = 'No entries found in that text — try adding specific names and details.';
       } else {
         worldTa.value = '';
@@ -181,16 +215,17 @@ Views.wiki = async function (root, cid) {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
       const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false });
-      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      const datas = parseWikiBlocks(res.text);
+      console.log('[wiki] topic parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
-      for (const b of blocks) {
-        const r = await upsertFromData(b.data);
+      for (const d of datas) {
+        const r = await upsertFromData(d);
         if (!r) continue;
         if (r.updated) updated++; else created++;
       }
       entries = await Store.listWiki(cid);
       renderList();
-      if (!blocks.length) {
+      if (!datas.length) {
         topicStatus.textContent = 'No entries generated — try a more specific topic.';
       } else {
         topicInp.value = '';
@@ -265,10 +300,11 @@ Views.wiki = async function (root, cid) {
       const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
         (threatText ? '\n\n' + threatText : '');
       const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false });
-      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      const datas = parseWikiBlocks(res.text);
+      console.log('[wiki] plan parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
-      for (const b of blocks) {
-        const r = await upsertFromData(b.data, { hiddenOnCreate: true });
+      for (const d of datas) {
+        const r = await upsertFromData(d, { hiddenOnCreate: true });
         if (!r) continue;
         if (r.updated) updated++; else created++;
       }
@@ -279,7 +315,7 @@ Views.wiki = async function (root, cid) {
       hiddenToggle.textContent = '🔓 Hide GM-only';
       renderList();
       Modal.close();
-      if (!blocks.length) Toast('The AI returned no plan entries — try again or add a threat description.');
+      if (!datas.length) Toast('The AI returned no plan entries — try again or add a threat description.');
       else Toast('Plan ' + (isUpdate ? 'updated' : 'created') + ': ' + created + ' hidden entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '.');
     } catch (e) {
       console.error(e);
