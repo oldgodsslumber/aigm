@@ -146,7 +146,9 @@ const LLM = (function () {
     return 'Gemini error (' + status + ')' + (msg ? ': ' + msg : '');
   }
 
-  async function callGeminiModel(settings, model, system, messages, grounding) {
+  async function callGeminiModel(settings, model, system, messages, options) {
+    options = options || {};
+    const grounding = options.grounding === true;
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(settings.geminiKey);
 
@@ -163,8 +165,14 @@ const LLM = (function () {
 
     const body = {
       contents: contents,
-      generationConfig: { temperature: settings.temperature, maxOutputTokens: 2048 }
+      generationConfig: { temperature: settings.temperature, maxOutputTokens: options.maxTokens || 2048 }
     };
+    /* Gemini 2.5 models "think" by default, which consumes the output budget —
+     * on extraction tasks that can exhaust it before any text is emitted
+     * (finishReason MAX_TOKENS, empty parts). Disable thinking when asked. */
+    if (options.thinking === false && /gemini-2\.5-flash/i.test(model)) {
+      body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+    }
 
     if (system) {
       if (isGemma) {
@@ -198,6 +206,9 @@ const LLM = (function () {
       ? cand.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
     if (!text) {
       const reason = cand && cand.finishReason;
+      if (reason === 'MAX_TOKENS') {
+        throw new Error('Gemini hit its output limit before returning any text. Try a narrower topic, or raise the token budget.');
+      }
       throw new Error('Gemini returned no text' + (reason ? ' (finishReason: ' + reason + ')' : '') + '.');
     }
     return text;
@@ -211,16 +222,18 @@ const LLM = (function () {
 
     /* Grounded request: pin to a Gemini model (Gemma can't search). Fall back
      * only to Flash Lite on a 429 — never to a non-grounding model. */
+    const gen = { grounding: options.grounding === true, maxTokens: options.maxTokens, thinking: options.thinking };
+
     if (options.grounding) {
       let active = /^gemini/i.test(chosen) ? chosen : 'gemini-2.5-flash';
       let text;
       try {
-        text = await callGeminiModel(settings, active, system, messages, true);
+        text = await callGeminiModel(settings, active, system, messages, gen);
       } catch (err) {
         if (err.status !== 429 || active === 'gemini-2.5-flash-lite') throw err;
         markExhausted(active);
         active = 'gemini-2.5-flash-lite';
-        text = await callGeminiModel(settings, active, system, messages, true);
+        text = await callGeminiModel(settings, active, system, messages, gen);
       }
       const used = bumpUsage(active);
       return { text: text, model: active, label: labelFor(active), used: used, limit: limitFor(active) };
@@ -233,7 +246,7 @@ const LLM = (function () {
 
     let text;
     try {
-      text = await callGeminiModel(settings, active, system, messages);
+      text = await callGeminiModel(settings, active, system, messages, gen);
     } catch (err) {
       /* On a 429, mark this model exhausted and try the next in the chain.
        * Handles the case where Google's count is ahead of our local one. */
@@ -243,14 +256,15 @@ const LLM = (function () {
       if (next === active) throw err; // no more chain to fall through to
       console.log('[llm] ' + active + ' hit 429 — auto-switching to ' + next);
       active = next;
-      text = await callGeminiModel(settings, active, system, messages);
+      text = await callGeminiModel(settings, active, system, messages, gen);
     }
 
     const used = bumpUsage(active);
     return { text: text, model: active, label: labelFor(active), used: used, limit: limitFor(active) };
   }
 
-  async function local(settings, system, messages) {
+  async function local(settings, system, messages, options) {
+    options = options || {};
     const base = (settings.localUrl || 'http://localhost:5000/v1').replace(/\/+$/, '');
     const body = {
       model: settings.localModel || undefined,
@@ -258,7 +272,7 @@ const LLM = (function () {
         return { role: m.role, content: m.content };
       })),
       temperature: settings.temperature,
-      max_tokens: 1024
+      max_tokens: options.maxTokens || 1024
     };
     let res;
     try {
@@ -290,8 +304,9 @@ const LLM = (function () {
     chat: async function (opts) {
       const s = opts.settings;
       const run = function () {
-        if (s.backend === 'local') return local(s, opts.system, opts.messages);
-        return gemini(s, opts.system, opts.messages, { grounding: opts.grounding === true });
+        const gen = { grounding: opts.grounding === true, maxTokens: opts.maxTokens, thinking: opts.thinking };
+        if (s.backend === 'local') return local(s, opts.system, opts.messages, gen);
+        return gemini(s, opts.system, opts.messages, gen);
       };
       let lastErr = null;
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
