@@ -565,6 +565,7 @@ main { min-height: calc(100vh - 52px); }
 .dedupe-cluster { border: 1px solid var(--line, #333); border-radius: 8px; padding: 12px; background: rgba(255,255,255,0.02); }
 .dedupe-cluster .form-row { margin-top: 8px; }
 .dedupe-body { width: 100%; }
+.build-tag { font-family: var(--mono); font-size: 10px; opacity: 0.4; margin-left: 8px; white-space: nowrap; }
 .empty-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
 .format-cards { display: flex; gap: 8px; flex-wrap: wrap; }
 .format-card {
