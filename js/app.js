@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260616j';
+const BUILD = '20260616k';
 
 const Modal = (function () {
   let root = null;

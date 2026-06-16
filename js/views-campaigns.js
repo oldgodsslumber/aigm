@@ -114,26 +114,27 @@ Views.campaigns = async function (root) {
   root.append(wrap);
 
   function startExample(ex) {
-    const nameInp = h('input', { type: 'text', value: ex.defaultCharName, autocomplete: 'off' });
+    const nameInp = ex.fixedPC ? null : h('input', { type: 'text', value: ex.defaultCharName, autocomplete: 'off' });
     const go = h('button', { class: 'btn accent' }, 'Begin');
     go.addEventListener('click', async function () {
       go.disabled = true;
       try {
-        const cid = await Examples.instantiate(ex.id, nameInp.value);
+        const cid = await Examples.instantiate(ex.id, nameInp ? nameInp.value : null);
         Modal.close();
         location.hash = '#/play/' + cid;
       } catch (e) { console.error(e); Toast(e.message); go.disabled = false; }
     });
-    nameInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+    if (nameInp) nameInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
     Modal.open(h('div', null,
       h('h2', null, ex.title),
       h('p', { class: 'card-sub' }, ex.blurb),
-      h('p', null, 'Everything is ready — the team, the wiki, and the villain\'s plan. Give your character a name; you\'ll introduce yourself in the opening scene, in your own words.'),
-      h('label', { class: 'form-row' }, h('span', null, 'Your character\'s name'), nameInp),
+      ex.fixedPC
+        ? h('p', null, 'You play ' + ex.pcName + '. Everything is ready — the cast, the wiki, and what\'s coming for you. Press Begin and the opening scene starts.')
+        : h('p', null, 'Everything is ready — the cast, the wiki, and the villain\'s plan. Give your character a name; you\'ll introduce yourself in the opening scene, in your own words.'),
+      nameInp ? h('label', { class: 'form-row' }, h('span', null, 'Your character\'s name'), nameInp) : null,
       h('div', { class: 'modal-actions' },
         h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go)));
-    nameInp.focus();
-    nameInp.select();
+    if (nameInp) { nameInp.focus(); nameInp.select(); }
   }
 
   function confirmDelete(c) {

@@ -70,12 +70,83 @@ const Examples = (function () {
       + 'A pause. The hiss of tires on wet road. "The IMF is gone — shut down this morning, signed away to people who decided we\'re a liability. And the thing they shut us down for chasing is real. The Syndicate. Agents who are all supposed to be dead, working as one, and they are already moving. I\'ve seen what they can do. No one will believe me. That\'s the point."\n\n'
       + 'His breathing steadies, like a decision being made. "Benji, Luther, Brandt — they\'re already in. I need one more. Someone off the books, someone the Agency doesn\'t have a file on. I need you."\n\n'
       + 'The wind drops, as if he\'s stepped through a doorway. "I\'m trusting you because I don\'t have a choice — so let\'s make it even. Who am I talking to? Tell me who you are, and what you bring to a job nobody is supposed to walk away from."'
+    },
+
+    {
+      id: 'running-man',
+      title: 'The Running Man',
+      tagline: 'You are Ben Richards. Stay alive thirty days on live TV — the whole country is hunting you.',
+      blurb: 'A near-future dystopia ruled by the Network and its blood-sport game shows. You play Ben Richards, a blacklisted laborer who signed up for the deadliest show on television to save his sick daughter. The rules are simple: you are now an enemy of the state, you get a head start, and then the Hunters come. Survive thirty days for the grand prize. Everyone watching gets paid to turn you in.',
+      defaultCharName: 'Ben Richards',
+      firstSceneTitle: 'Day One',
+      pc: {
+        name: 'Ben Richards',
+        description: 'A blacklisted laborer out of the co-op slums, lean and hard from years of work and hunger. Stubborn, quick-witted, and quietly furious at a system that would let his daughter die for the price of medicine. Not a hero — a desperate man with nothing left to lose and a refusal to beg. He runs because his family needs the money, and because he will not give the Network the satisfaction of watching him quit. Smart enough to improvise out of any corner, angry enough to fight back, and far more dangerous than anyone on that broadcast expects.'
+      },
+      campaign: {
+        format: 'multishot',
+        genres: ['Sci-Fi', 'Dystopian', 'Thriller', 'Action'],
+        setting: 'A near-future America gutted by economic collapse and obscene inequality, ruled in all but name by the Network — a media-corporate state that keeps the masses broke, medicated by free television, and entertained by watching the poor die for prizes. Smog-choked co-op cities, ration cards and blacklists, propaganda blaring from every screen. The Games are the one advertised way out of the gutter, and by far the fastest way into a grave.',
+        premise: 'Ben Richards, blacklisted and broke with a daughter dying for want of medicine, has done the last desperate thing left to a man like him: walked into the Games Building and signed his life away. The Network chose him for The Running Man — its deadliest, highest-paying show. As of now he is a declared enemy of the state. He gets a head start, and then the Hunters come, led by Evan McCone, who has never failed. Survive thirty days and the grand prize is his — more money than his family could spend in three lifetimes — and every hour alive earns more. The whole country is watching, and anyone who turns him in gets paid. Ben Richards has never once been good at lying down and dying.',
+        boundaries: 'A gritty dystopian thriller — tense, kinetic, and angry, built on chases, disguises, narrow escapes, and the grinding pressure of staying alive while an entire nation hunts you for a reward. Keep violence hard but not gratuitously gory; the real horror is the system — the surveillance, the manufactured spectacle, the desperation it breeds. Richards is defiant, sharp-tongued, and resourceful. Allow moral grays: survival forces ugly choices, and not everyone who offers help is what they seem.',
+        rulesNotes: 'Track the survival clock explicitly: it is Day 1 of 30. Note the day as it advances, and let real time pressure build — the Hunters get closer, the net tightens, and the Network manipulates the story as the days pass. Winning means surviving all thirty days OR breaking the Network\'s control of the broadcast; losing means being killed on air or giving up.'
+      },
+      pinned: ['The Running Man (the Game)', 'The Network', 'The Hunters', 'Evan McCone', 'Dan Killian', 'Bobby Thompson', 'Sheila Richards', 'Cathy Richards'],
+      wiki: [
+        { type: 'event', name: 'The Running Man (the Game)', aliases: ['the Game', 'the show'], tags: ['rules', 'clock'],
+          body: 'The Network\'s deadliest, most-watched game show. The contestant — the Runner — is declared an enemy of the state and must survive thirty days. They are given a head start before the Hunters are loosed. They earn money for every hour they stay alive, and the grand prize for surviving all thirty days is a fortune. The entire population is invited to hunt them: a confirmed sighting pays the tipster a small fortune, so every face in every crowd is a potential informer. The Runner is also required to keep feeding the broadcast — submitting regular footage of themselves — so the show can air their suffering and, in doing so, keep a thread on where they are.' },
+        { type: 'faction', name: 'The Network', aliases: ['the Games Network', 'the Games Building'], tags: ['power'],
+          body: 'The all-controlling media-corporate state that runs the Games, the news, the propaganda, and effectively the country. It manufactures reality for a sedated, impoverished public: it decides who is a hero and who is a monster, and edits the footage to match. To the Network, Ben Richards is not a person but content — and content that performs well can be made to last, or made to die, exactly when the ratings call for it.' },
+        { type: 'faction', name: 'The Hunters', aliases: ['Hunters'], tags: ['threat'],
+          body: 'An elite, lavishly funded unit of professional killers the Network unleashes on each Runner. Disciplined, theatrical, and relentless, they treat the hunt as both a craft and a performance for the cameras. They have every advantage — money, weapons, surveillance, the public\'s tips — and they are patient. No Runner has ever outlasted them for thirty days.' },
+        { type: 'npc', name: 'Evan McCone', aliases: ['McCone'], tags: ['Hunters', 'threat'],
+          body: 'The legendary Chief Hunter who leads the pursuit — a cold, methodical predator who has never once let a Runner reach the end of the clock. Soft-voiced and unhurried, he treats Richards as an interesting problem to be solved rather than a man to be hated, which somehow makes him worse. Where the Hunters go, McCone is the mind behind them.' },
+        { type: 'npc', name: 'Dan Killian', aliases: ['Killian'], tags: ['Network'],
+          body: 'The Network\'s smooth, powerful producer of the Games — the man who chose Richards and put him on the air. He has a thousand-dollar smile and the patience of someone who has watched a hundred desperate men make the same doomed bet. He sees Richards as the best content he\'s had in years, and is already calculating how the story should end.',
+          secret: 'Killian is genuinely impressed by Richards and, if Richards survives long enough and proves dangerous enough, will privately offer him a devil\'s bargain: stop running, come work for the Network as a Hunter, and live rich and comfortable — betraying every other Runner who comes after. It is a real offer and a real trap, and refusing it makes Killian decide Richards must die spectacularly, on cue.' },
+        { type: 'npc', name: 'Bobby Thompson', aliases: ['Bobby T', 'the host'], tags: ['Network'],
+          body: 'The dazzling, sinister host of The Running Man and the beloved face of the broadcast — all teeth and showmanship and cruelty dressed as charm. He works the studio crowd into a frenzy, narrates the hunt like a sportscaster, and turns each Runner into a villain the nation can cheer to watch fall. The public adores him; he is the smiling mask over the whole machine.' },
+        { type: 'npc', name: 'Sheila Richards', aliases: ['Sheila'], tags: ['family'],
+          body: 'Ben\'s wife, holding their home together back in the co-op slums while he runs. She is the reason he signed up and the reason he can\'t stop — every hour he survives is money she and Cathy desperately need. She is also a pressure point the Network knows about, and a way to reach Ben that no Hunter could manage alone.' },
+        { type: 'npc', name: 'Cathy Richards', aliases: ['Cathy'], tags: ['family'],
+          body: 'Ben and Sheila\'s young daughter, sick with an illness the family can\'t afford to treat — the medicine costs more than a blacklisted man can earn in a year. She is the whole reason Ben walked into the Games Building. Keeping her alive is the prize that actually matters to him; the grand prize is just the means.' },
+
+        /* ---- GM-only (hidden); never pinned, fed to the GM automatically ---- */
+        { type: 'plan', name: 'The Network\'s Hunt', aliases: [], tags: ['countdown'], hidden: true,
+          body: 'THE THREAT: the Network and its Hunters, turning Ben Richards\'s fight to survive into thirty days of profitable spectacle that always ends the same way.\n'
+              + 'THE GOAL (Nightfall): Richards is killed on live television at the moment of maximum ratings — the system reaffirmed, the audience roaring, his death sold as entertainment and a warning.\n'
+              + 'The six steps the Network carries out unless Richards disrupts them:\n'
+              + '- Day: the head start ends and the Hunters deploy; the first citizen tips come in; the Network edits Richards into a snarling monster so the public will cheer his death.\n'
+              + '- Shadows: a tip or his own required footage betrays his first hiding place; he is flushed into the open, hurt or nearly caught, and the Network raises the bounty to turn every stranger into a threat.\n'
+              + '- Dawn: the Network leans on his family — surveilling and pressuring Sheila and Cathy on air — to flush Richards out or break him, and dangles a public "surrender and we\'ll help your daughter" deal that it has no intention of honoring.\n'
+              + '- Dusk: McCone gets a real lead and springs a set-piece ambush; anyone in the underground who helped Richards is exposed or killed; and Richards learns a Network secret that recontextualizes the whole game (see The Rigged Game, The Poisoned Air).\n'
+              + '- Sunset: the Network manufactures a finale — herding Richards toward a public, controlled location for a televised kill, stacking the odds, with McCone personally closing in and the cameras ready.\n'
+              + '- Nightfall: Richards is killed or co-opted on air and the Network wins the story — UNLESS he has seized the broadcast and turned the nation watching against the people running it.\n'
+              + 'Advance this at a believable pace as the days tick by; the clock and the closing net ARE the pressure. Richards wins by surviving all thirty days or by hijacking the spectacle and exposing the truth on the Network\'s own airwaves. Never reveal the machinery outright — show it through what happens.' },
+        { type: 'event', name: 'The Rigged Game', aliases: [], tags: ['secret'], hidden: true,
+          body: 'The grand prize is a lie. No Runner has ever been permitted to survive thirty days — the prize and the rules exist to sell hope and make the kill feel fair. The clock, the head start, the earnings-per-hour are all theater; when a Runner gets too good or too sympathetic, the Network simply changes the game, manufactures evidence, or arranges an "accident." Discovering this is a turning point: it means the only real way to win is to break the Network\'s control of the story itself.' },
+        { type: 'event', name: 'The Poisoned Air', aliases: [], tags: ['secret'], hidden: true,
+          body: 'The Network and the state know that the air in the co-op slums is slowly killing the poor — and that the cheap "filters" they sell the public do nothing. The illness taking Cathy, and thousands like her, is not bad luck; it is a quietly accepted cost of the system. If Richards uncovers and broadcasts this, it is the kind of truth that could turn a sedated audience into a furious one — which is exactly why the Network would rather see him dead than let him say it on air.' }
+      ],
+      opening:
+        'The holding room smells of sweat and antiseptic and the hot dust of television lights. Past the door, a crowd that paid to be here is chanting a name like it\'s a curse and a prayer at once. Your name.\n\n'
+      + 'Thirty-six hours ago you were nobody — blacklisted, broke, watching your daughter Cathy cough herself thinner while the pharmacy waved away your ration card. Now you are the most-watched man in the country.\n\n'
+      + 'On a wall of monitors the host, Bobby Thompson, throws his arms wide to a roaring studio. "Laaadies and gentlemen — your newest Runner!" The screens cut to your face, except it isn\'t yours anymore; they\'ve edited you into something snarling and dangerous, a killer the nation will love to watch die. Beside the monitors, a producer with a thousand-dollar smile — Dan Killian — watches you the way a man watches a horse he\'s bet on.\n\n'
+      + 'The rules scroll past in cheerful graphics. You are now, officially, an enemy of the state. Thirty days. Survive them and the grand prize is yours — more New Dollars than your family could spend in three lifetimes — and every hour you stay alive pays out more. The Hunters, led by Evan McCone, who has never once failed, are already gearing up. So is everyone else: a confirmed sighting pays the tipster a year\'s wages, so every face in every crowd is a camera and a knife. And the Network expects its footage — you\'ll be made to keep feeding the show even as it feeds on you.\n\n'
+      + 'A handler unlocks the steel door. Cold city air pours in, gray and sour with smog. The red light above the exit ticks over to green.\n\n'
+      + '"You get a head start, friend." Killian\'s voice is almost gentle. "I\'d use it."\n\n'
+      + 'The chant rises behind you. Ahead: a street of alleys and crowds and cameras on every corner, a whole city that has been told you\'re worth money dead. Thirty days starts now.\n\nWhat do you do?'
     }
   ];
 
   function list() {
     return LIST.map(function (e) {
-      return { id: e.id, title: e.title, tagline: e.tagline, blurb: e.blurb, defaultCharName: e.defaultCharName };
+      return {
+        id: e.id, title: e.title, tagline: e.tagline, blurb: e.blurb,
+        defaultCharName: e.defaultCharName,
+        /* fixedPC: the player plays a defined character (no name prompt) */
+        fixedPC: !!e.pc, pcName: e.pc ? e.pc.name : null
+      };
     });
   }
 
@@ -89,9 +160,13 @@ const Examples = (function () {
       settings: {}, currentSceneId: null, createdAt: Date.now(), example: def.id
     }, def.campaign));
 
+    /* Two PC modes: a defined character (def.pc — the player IS Ben Richards,
+     * bio prewritten) or a blank self-insert the player names + describes. */
     await Store.saveCharacter(cid, {
-      name: (charName && charName.trim()) || def.defaultCharName,
-      isNPC: false, description: '', createdAt: Date.now()
+      name: (def.pc && def.pc.name) || (charName && charName.trim()) || def.defaultCharName,
+      isNPC: false,
+      description: (def.pc && def.pc.description) || '',
+      createdAt: Date.now()
     });
 
     const nameToId = {};
