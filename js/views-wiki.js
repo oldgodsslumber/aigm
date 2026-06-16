@@ -38,6 +38,9 @@ Views.wiki = async function (root, cid) {
     openEditor({ type: 'npc', name: '', aliases: [], tags: [], body: '', createdBy: 'user', mergedInto: null });
   });
 
+  const dedupeBtn = h('button', { class: 'btn', title: 'Scan the wiki for entries that are the same thing and merge them' }, '⧉ Find duplicates');
+  dedupeBtn.addEventListener('click', runDedupe);
+
   /* ---- "Add world info": freeform notes filed into entries by the LLM ---- */
   const worldTa = h('textarea', { class: 'world-intake-input', rows: '4', placeholder: 'Paste or type anything about your world — characters, places, factions, history, items. This won’t start a scene or advance the story; it just gets filed into the wiki as entries.' });
   const intakeBtn = h('button', { class: 'btn accent' }, 'Add to wiki');
@@ -66,7 +69,7 @@ Views.wiki = async function (root, cid) {
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Wiki', h('span', { class: 'head-sub' }, campaign.name)),
-      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, newBtn)),
+      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, dedupeBtn, newBtn)),
     h('details', { class: 'wiki-intake', open: '' },
       h('summary', null, 'Add world info'),
       h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
@@ -526,6 +529,150 @@ Views.wiki = async function (root, cid) {
       h('h2', null, 'Merge “' + src.name + '”'),
       h('p', { class: 'card-sub' }, 'The merged entry isn\'t deleted — it\'s marked as merged, and its names become aliases of the target so lookups still find it.'),
       h('label', { class: 'form-row' }, h('span', null, 'Merge into'), sel),
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go)));
+  }
+
+  /* ---------- LLM-assisted duplicate consolidation ---------- */
+
+  /* Fold every entry in `members` into `target` (one of them) and clean up.
+   * Soft merge: the folded entries survive marked mergedInto, their names
+   * become aliases, so lookups still resolve and nothing is truly lost. */
+  async function applyMerge(cluster) {
+    const members = cluster.entries;
+    /* target = the member matching the canonical name, else the richest body */
+    const canon = String(cluster.name || '').trim().toLowerCase();
+    let target = members.find(function (m) { return m.name.toLowerCase() === canon; });
+    if (!target) target = members.slice().sort(function (a, b) { return (b.body || '').length - (a.body || '').length; })[0];
+
+    target.aliases = target.aliases || [];
+    target.tags = target.tags || [];
+    const secrets = [];
+    if (target.secret && target.secret.trim()) secrets.push(target.secret.trim());
+    let anyHidden = !!target.hidden;
+
+    members.forEach(function (m) {
+      [m.name].concat(m.aliases || []).forEach(function (n) {
+        if (n && n.toLowerCase() !== target.name.toLowerCase() && target.aliases.indexOf(n) < 0) target.aliases.push(n);
+      });
+      (m.tags || []).forEach(function (t) { if (t && target.tags.indexOf(t) < 0) target.tags.push(t); });
+      if (m.hidden) anyHidden = true;
+      if (m.id !== target.id && m.secret && m.secret.trim()) secrets.push(m.secret.trim());
+    });
+
+    if (cluster.name && String(cluster.name).trim()) target.name = String(cluster.name).trim();
+    if (TYPES.indexOf(cluster.type) >= 0) target.type = cluster.type;
+    /* AI-rewritten clean body; fall back to concatenating the originals */
+    const merged = String(cluster.body || '').trim();
+    target.body = merged || members.map(function (m) { return m.body || ''; }).filter(Boolean).join('\n\n');
+    if (secrets.length) target.secret = secrets.join('\n\n');
+    if (anyHidden) target.hidden = true;
+    /* drop target's own name from its alias list if it slipped in */
+    target.aliases = target.aliases.filter(function (n) { return n.toLowerCase() !== target.name.toLowerCase(); });
+
+    await Store.saveWiki(cid, target);
+    for (const m of members) {
+      if (m.id === target.id) continue;
+      m.mergedInto = target.id;
+      await Store.saveWiki(cid, m);
+    }
+    return target.name;
+  }
+
+  async function runDedupe() {
+    const cand = entries.filter(function (e) { return !e.mergedInto; });
+    if (cand.length < 2) { Toast('Need at least two entries to look for duplicates.'); return; }
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.');
+      return;
+    }
+    dedupeBtn.disabled = true;
+    const origLabel = dedupeBtn.textContent;
+    dedupeBtn.textContent = 'Scanning…';
+    try {
+      const list = cand.map(function (e, i) {
+        const aka = (e.aliases && e.aliases.length) ? ' (aka ' + e.aliases.join(', ') + ')' : '';
+        return i + '. [' + e.type + '] ' + e.name + aka + ' — ' + (e.body || '').slice(0, 400).replace(/\s+/g, ' ');
+      }).join('\n');
+      const res = await LLM.chat({
+        settings: settings, system: Context.wikiDedupePrompt(),
+        messages: [{ role: 'user', content: 'Entries:\n' + list }],
+        maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.1
+      });
+
+      /* parse the JSON cluster array, tolerating a stray fence or prose */
+      let raw = String(res.text || '').trim();
+      const fence = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+      if (fence) raw = fence[1].trim();
+      let clusters = relaxedParse(raw);
+      if (!Array.isArray(clusters)) {
+        const open = raw.indexOf('['), close = raw.lastIndexOf(']');
+        clusters = (open >= 0 && close > open) ? relaxedParse(raw.slice(open, close + 1)) : null;
+      }
+      if (!Array.isArray(clusters)) clusters = [];
+
+      /* validate: map member indices back to entries, drop bad/degenerate ones */
+      const valid = [];
+      clusters.forEach(function (c) {
+        if (!c || !Array.isArray(c.members)) return;
+        const seen = {}, ents = [];
+        c.members.forEach(function (idx) {
+          const e = cand[idx];
+          if (e && !seen[e.id]) { seen[e.id] = 1; ents.push(e); }
+        });
+        if (ents.length >= 2) valid.push({ entries: ents, name: c.name, type: c.type, body: c.body });
+      });
+
+      console.log('[wiki] dedupe found ' + valid.length + ' cluster(s) from ' + (res.text || '').length + ' chars', valid.length ? '' : res.text);
+      if (!valid.length) { Toast('No duplicate entries found.'); return; }
+      openDedupeReview(valid);
+    } catch (e) {
+      console.error(e);
+      Toast(e.message);
+    } finally {
+      dedupeBtn.disabled = false;
+      dedupeBtn.textContent = origLabel;
+    }
+  }
+
+  function openDedupeReview(clusters) {
+    const rows = clusters.map(function (c) {
+      const chk = h('input', { type: 'checkbox' });
+      chk.checked = true;
+      const bodyTa = h('textarea', { rows: '4', class: 'dedupe-body' }, c.body || '');
+      const folds = c.entries.map(function (e) { return e.name; }).join('  +  ');
+      const row = h('div', { class: 'dedupe-cluster' },
+        h('label', { class: 'inline-pair' }, chk,
+          h('span', null, h('strong', null, c.name || c.entries[0].name),
+            h('span', { class: 'card-sub' }, '  · ' + (c.type || c.entries[0].type)))),
+        h('p', { class: 'card-sub' }, 'Merges ' + c.entries.length + ': ' + folds),
+        h('label', { class: 'form-row' }, h('span', null, 'Merged body (edit before applying)'), bodyTa));
+      return { cluster: c, chk: chk, bodyTa: bodyTa, row: row };
+    });
+
+    const go = h('button', { class: 'btn accent' }, 'Merge selected');
+    go.addEventListener('click', async function () {
+      const picked = rows.filter(function (r) { return r.chk.checked; });
+      if (!picked.length) { Modal.close(); return; }
+      go.disabled = true;
+      go.textContent = 'Merging…';
+      let merged = 0;
+      for (const r of picked) {
+        r.cluster.body = r.bodyTa.value.trim();
+        try { await applyMerge(r.cluster); merged++; }
+        catch (e) { console.warn('[wiki] merge failed:', e); }
+      }
+      entries = await Store.listWiki(cid);
+      Modal.close();
+      renderList();
+      Toast('Merged ' + merged + ' duplicate set' + (merged === 1 ? '' : 's') + '.');
+    });
+
+    Modal.open(h('div', { class: 'modal-wide' },
+      h('h2', null, 'Review duplicates'),
+      h('p', { class: 'card-sub' }, 'The AI grouped these as the same thing. Untick any it got wrong, edit the merged text, then apply. Folded entries aren\'t deleted — their names become aliases so lookups still find them.'),
+      h('div', { class: 'dedupe-list' }, rows.map(function (r) { return r.row; })),
       h('div', { class: 'modal-actions' },
         h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go)));
   }

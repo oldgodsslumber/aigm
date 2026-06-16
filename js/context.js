@@ -146,6 +146,28 @@ const Context = (function () {
     return lines.join('\n');
   }
 
+  /* System prompt for the Wiki tab's "Find duplicates" button. The model is
+   * given a numbered list of existing entries and clusters the ones that are
+   * the SAME entity (even under different names), proposing a clean merged
+   * body built only from facts already present. Output: JSON clusters. */
+  function wikiDedupePrompt() {
+    return [
+      'You are a worldbuilding archivist cleaning up a tabletop RPG wiki that has accumulated duplicate entries from separate note dumps. You are given a NUMBERED list of existing entries (index, type, name, aliases, body).',
+      '',
+      'Find sets of entries that describe the SAME real-world entity — the same person, place, faction, item, or event — even when their names differ (nicknames, titles, partial names, spelling variants) or the text came from different notes.',
+      'Be CONSERVATIVE: only group entries you are confident are literally the same entity. Do NOT group things that are merely related or similar — a character and their weapon are not the same; two different guards are not the same; a city and a building inside it are not the same.',
+      '',
+      'For each duplicate set of TWO OR MORE entries, output one cluster object:',
+      '{"members": [<indices>], "name": "<best canonical name>", "type": "<one type>", "body": "<merged body>"}',
+      '- members: the index NUMBERS (from the list) of every entry in this set. A set must have at least two.',
+      '- name: the clearest, most complete canonical name — usually the full proper name.',
+      '- type: the correct single type for the merged entity (pc, npc, location, faction, item, or event).',
+      '- body: ONE clean, coherent body that combines ONLY the facts already present across the listed entries, de-duplicated. Do NOT invent, embellish, guess, or add anything not in the originals.',
+      '',
+      'Output ONLY a JSON array of cluster objects — nothing before or after it, no prose, no markdown, no code fences. If there are no duplicates, output exactly [].'
+    ].join('\n');
+  }
+
   /* System prompt for the Wiki tab's "AI Plan" / "Update plan" buttons.
    * Designs a hidden, Monster of the Week-style threat plan: a 6-step
    * countdown plus supporting secrets, all filed as hidden wiki entries the
@@ -366,5 +388,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, planPrompt: planPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, wikiDedupePrompt: wikiDedupePrompt, planPrompt: planPrompt, est: est };
 })();
