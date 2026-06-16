@@ -179,7 +179,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false, jsonMode: true });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] intake parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -222,7 +222,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false, jsonMode: true });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] topic parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -307,7 +307,7 @@ Views.wiki = async function (root, cid) {
       });
       const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
         (threatText ? '\n\n' + threatText : '');
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false, jsonMode: true });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] plan parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;

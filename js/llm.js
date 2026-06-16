@@ -177,7 +177,10 @@ const LLM = (function () {
 
     const body = {
       contents: contents,
-      generationConfig: { temperature: settings.temperature, maxOutputTokens: options.maxTokens || 2048 }
+      generationConfig: {
+        temperature: (options.temperature != null ? options.temperature : settings.temperature),
+        maxOutputTokens: options.maxTokens || 2048
+      }
     };
     /* Gemini 2.5 models "think" by default, which consumes the output budget —
      * on extraction tasks that can exhaust it before any text is emitted
@@ -245,7 +248,7 @@ const LLM = (function () {
 
     /* Grounded request: pin to a Gemini model (Gemma can't search). Fall back
      * only to Flash Lite on a 429 — never to a non-grounding model. */
-    const gen = { grounding: options.grounding === true, maxTokens: options.maxTokens, thinking: options.thinking, jsonMode: options.jsonMode };
+    const gen = { grounding: options.grounding === true, maxTokens: options.maxTokens, thinking: options.thinking, jsonMode: options.jsonMode, temperature: options.temperature };
 
     if (options.grounding) {
       let active = /^gemini/i.test(chosen) ? chosen : 'gemini-2.5-flash';
@@ -294,7 +297,7 @@ const LLM = (function () {
       messages: [{ role: 'system', content: system }].concat(messages.map(function (m) {
         return { role: m.role, content: m.content };
       })),
-      temperature: settings.temperature,
+      temperature: (options.temperature != null ? options.temperature : settings.temperature),
       max_tokens: options.maxTokens || 1024
     };
     let res;
@@ -328,7 +331,7 @@ const LLM = (function () {
     chat: async function (opts) {
       const s = opts.settings;
       const run = function () {
-        const gen = { grounding: opts.grounding === true, maxTokens: opts.maxTokens, thinking: opts.thinking, jsonMode: opts.jsonMode === true };
+        const gen = { grounding: opts.grounding === true, maxTokens: opts.maxTokens, thinking: opts.thinking, jsonMode: opts.jsonMode === true, temperature: opts.temperature };
         if (s.backend === 'local') return local(s, opts.system, opts.messages, gen);
         return gemini(s, opts.system, opts.messages, gen);
       };
