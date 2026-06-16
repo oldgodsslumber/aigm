@@ -103,6 +103,54 @@ Views.settings = async function (root) {
     Toast('Settings saved.');
   });
 
+  /* ---- read-aloud (text-to-speech) voice — device-local, saved on change ---- */
+  const voiceSel = h('select', null);
+  const ttsRate = h('input', { type: 'range', min: '0.5', max: '2', step: '0.05', value: String(Speech.getRate()) });
+  const ttsRateVal = h('span', { class: 'range-val' }, Speech.getRate() + '×');
+  ttsRate.addEventListener('input', function () { ttsRateVal.textContent = ttsRate.value + '×'; });
+  ttsRate.addEventListener('change', function () { Speech.setRate(Number(ttsRate.value)); });
+  voiceSel.addEventListener('change', function () { Speech.setVoiceURI(voiceSel.value); });
+
+  function populateVoices() {
+    const vs = Speech.voices();
+    const cur = Speech.getVoiceURI();
+    voiceSel.innerHTML = '';
+    voiceSel.append(h('option', { value: '' }, 'Device default'));
+    const en = vs.filter(function (v) { return /^en/i.test(v.lang); });
+    const other = vs.filter(function (v) { return !/^en/i.test(v.lang); });
+    [['English', en], ['Other languages', other]].forEach(function (pair) {
+      if (!pair[1].length) return;
+      const og = h('optgroup', { label: pair[0] });
+      pair[1].forEach(function (v) {
+        og.append(h('option', { value: v.voiceURI }, v.name + ' (' + v.lang + ')' + (v.default ? ' — default' : '')));
+      });
+      voiceSel.append(og);
+    });
+    voiceSel.value = cur || '';
+  }
+  populateVoices();
+  Speech.onVoices(populateVoices);
+
+  const testBtn = h('button', { class: 'btn small', type: 'button' }, '🔊 Test voice');
+  testBtn.addEventListener('click', function () {
+    Speech.setVoiceURI(voiceSel.value);
+    Speech.setRate(Number(ttsRate.value));
+    const ok = Speech.speak('This is how the Game Master will sound when reading your story aloud.', {});
+    if (!ok) Toast('Text-to-speech isn\'t available in this browser.');
+  });
+
+  const ttsCard = Speech.supported()
+    ? h('section', { class: 'settings-card' },
+        h('h2', null, 'Read-aloud voice'),
+        h('p', { class: 'card-sub' }, 'Voice for the 🔊 Read button in Play. The list shows whatever voices this device exposes to the browser; changes save automatically.'),
+        row('Voice', voiceSel),
+        row('Speed', h('div', { class: 'inline-pair' }, ttsRate, ttsRateVal)),
+        h('div', { class: 'inline-pair' }, testBtn),
+        h('p', { class: 'sf-hint' }, 'On iPhone, Siri and most “premium” voices are not available to web apps — an Apple limitation, not a bug. To add what you can: Settings → Accessibility → Spoken Content → Voices → English → download a voice; any the browser exposes will show up here (you may need to reopen the tab). Android and desktop Chrome usually list many more, including higher-quality “Google”/“Natural” voices.'))
+    : h('section', { class: 'settings-card' },
+        h('h2', null, 'Read-aloud voice'),
+        h('p', { class: 'card-sub' }, 'This browser does not expose text-to-speech, so read-aloud is unavailable here. Try Chrome or Safari.'));
+
   /* backup */
   const exportBtn = h('button', { class: 'btn' }, 'Export data');
   exportBtn.addEventListener('click', function () {
@@ -136,6 +184,7 @@ Views.settings = async function (root) {
       h('h2', null, 'Per-campaign backend'),
       h('p', { class: 'card-sub' }, 'Override the global backend for individual campaigns.'),
       overrides) : null,
+    ttsCard,
     h('section', { class: 'settings-card' },
       h('h2', null, 'Data'),
       h('p', { class: 'card-sub' }, 'Everything lives in this browser until Firebase is wired up. Export a backup before clearing site data.'),

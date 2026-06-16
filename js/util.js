@@ -66,16 +66,56 @@ function stripMd(text) {
 var Speech = (function () {
   var synth = (typeof window !== 'undefined' && window.speechSynthesis) || null;
   var current = null;            // active session; .reset resets the caller's UI
+  var readyCbs = [];
 
-  /* touch the voice list so it's populated by the time we speak */
+  function emitReady() {
+    var cbs = readyCbs; readyCbs = [];
+    cbs.forEach(function (c) { try { c(); } catch (e) {} });
+  }
+  /* The voice list loads asynchronously (and on iOS is often empty until first
+   * use). Touch it now and re-notify listeners whenever it changes. */
   if (synth && 'onvoiceschanged' in synth) {
-    synth.onvoiceschanged = function () { try { synth.getVoices(); } catch (e) {} };
+    synth.onvoiceschanged = function () { try { synth.getVoices(); } catch (e) {} emitReady(); };
   }
 
   function supported() {
     /* iOS WebKit doesn't always report the constructor as typeof "function",
      * so check for existence, not the exact type. */
     return !!synth && typeof window.SpeechSynthesisUtterance !== 'undefined';
+  }
+
+  function voices() {
+    if (!synth) return [];
+    try { return synth.getVoices() || []; } catch (e) { return []; }
+  }
+  /* Call cb once voices are available — immediately if already loaded, on the
+   * voiceschanged event otherwise, with a short poll as an iOS fallback. */
+  function onVoices(cb) {
+    if (voices().length) { cb(); return; }
+    readyCbs.push(cb);
+    var tries = 0;
+    var poll = function () {
+      if (voices().length) { emitReady(); return; }
+      if (++tries < 10) setTimeout(poll, 250);
+    };
+    setTimeout(poll, 250);
+  }
+
+  function pref(key, def) { try { var v = localStorage.getItem(key); return v == null ? def : v; } catch (e) { return def; } }
+  function setPref(key, val) { try { if (val == null || val === '') localStorage.removeItem(key); else localStorage.setItem(key, val); } catch (e) {} }
+
+  function getVoiceURI() { return pref('aigm.ttsVoice', ''); }
+  function setVoiceURI(uri) { setPref('aigm.ttsVoice', uri || ''); }
+  function getRate() { var r = parseFloat(pref('aigm.ttsRate', '1')); return (r >= 0.5 && r <= 2) ? r : 1; }
+  function setRate(r) { setPref('aigm.ttsRate', String(r)); }
+
+  /* resolve the saved preference to a live voice object (URI first, then name) */
+  function chosenVoice() {
+    var uri = getVoiceURI();
+    if (!uri) return null;
+    var vs = voices();
+    return vs.filter(function (v) { return v.voiceURI === uri; })[0] ||
+           vs.filter(function (v) { return v.name === uri; })[0] || null;
   }
 
   /* break prose into ~200-char, sentence-aligned chunks */
@@ -110,11 +150,14 @@ var Speech = (function () {
     opts = opts || {};
     var session = { reset: opts.onend || null };
     current = session;
+    var voice = opts.voice || chosenVoice();
+    var rate = opts.rate || getRate();
     chunks.forEach(function (c, idx) {
       var u = new SpeechSynthesisUtterance(c);
-      u.rate = opts.rate || 1;
+      u.rate = rate;
       u.pitch = opts.pitch || 1;
-      u.lang = opts.lang || 'en-US';
+      if (voice) { u.voice = voice; u.lang = voice.lang; }
+      else u.lang = opts.lang || 'en-US';
       if (idx === chunks.length - 1) {
         var done = function () { if (current === session) clearCurrent(); };
         u.onend = done; u.onerror = done;
@@ -126,7 +169,12 @@ var Speech = (function () {
 
   function speaking() { return !!current; }
 
-  return { supported: supported, speak: speak, stop: stop, speaking: speaking };
+  return {
+    supported: supported, speak: speak, stop: stop, speaking: speaking,
+    voices: voices, onVoices: onVoices,
+    getVoiceURI: getVoiceURI, setVoiceURI: setVoiceURI,
+    getRate: getRate, setRate: setRate
+  };
 })();
 
 function debounce(fn, ms) {
