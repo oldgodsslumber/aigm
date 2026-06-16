@@ -147,6 +147,14 @@ main { min-height: calc(100vh - 52px); }
   color: var(--ink);
 }
 .campaign-card:hover { border-color: var(--accent); text-decoration: none; }
+.examples-section { margin-top: 28px; }
+.section-title { font-size: 16px; color: var(--dim); margin: 0 0 4px; }
+.example-card { text-align: left; cursor: pointer; width: 100%; font: inherit; }
+.example-badge {
+  display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: .05em;
+  text-transform: uppercase; color: var(--accent); border: 1px solid var(--accent);
+  border-radius: 99px; padding: 1px 8px; margin-bottom: 8px; opacity: 0.85;
+}
 .campaign-card h2 { font-size: 20px; margin-bottom: 6px; }
 .card-sub { color: var(--dim); font-size: 14px; margin: 2px 0; }
 .card-meta { color: var(--faint); font-size: 13px; font-family: var(--mono); margin: 8px 0 0; }

@@ -93,7 +93,48 @@ Views.campaigns = async function (root) {
     }
     wrap.append(grid);
   }
+
+  /* ---- ready-to-play examples: a full campaign, prepped; just add yourself ---- */
+  const examples = (typeof Examples !== 'undefined' && Examples.list()) || [];
+  if (examples.length) {
+    const exGrid = h('div', { class: 'card-grid' });
+    examples.forEach(function (ex) {
+      const card = h('button', { class: 'campaign-card example-card', type: 'button' },
+        h('span', { class: 'example-badge' }, 'Ready to play'),
+        h('h2', null, ex.title),
+        h('p', { class: 'card-sub' }, ex.tagline));
+      card.addEventListener('click', function () { startExample(ex); });
+      exGrid.append(card);
+    });
+    wrap.append(h('div', { class: 'examples-section' },
+      h('h2', { class: 'section-title' }, 'Example adventures'),
+      h('p', { class: 'card-sub' }, 'Jump straight in — a full campaign with the cast, the wiki, and the villain\'s plan already prepared. You just name your character and play.'),
+      exGrid));
+  }
   root.append(wrap);
+
+  function startExample(ex) {
+    const nameInp = h('input', { type: 'text', value: ex.defaultCharName, autocomplete: 'off' });
+    const go = h('button', { class: 'btn accent' }, 'Begin');
+    go.addEventListener('click', async function () {
+      go.disabled = true;
+      try {
+        const cid = await Examples.instantiate(ex.id, nameInp.value);
+        Modal.close();
+        location.hash = '#/play/' + cid;
+      } catch (e) { console.error(e); Toast(e.message); go.disabled = false; }
+    });
+    nameInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') go.click(); });
+    Modal.open(h('div', null,
+      h('h2', null, ex.title),
+      h('p', { class: 'card-sub' }, ex.blurb),
+      h('p', null, 'Everything is ready — the team, the wiki, and the villain\'s plan. Give your character a name; you\'ll introduce yourself in the opening scene, in your own words.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Your character\'s name'), nameInp),
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go)));
+    nameInp.focus();
+    nameInp.select();
+  }
 
   function confirmDelete(c) {
     /* Hard delete with type-the-name confirm — the one destructive act in the app. */
