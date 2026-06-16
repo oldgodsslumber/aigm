@@ -146,6 +146,18 @@ const LLM = (function () {
     return 'Gemini error (' + status + ')' + (msg ? ': ' + msg : '');
   }
 
+  /* fetch with an abort-based timeout so a stuck request fails fast instead of
+   * hanging the UI forever. */
+  async function fetchTimeout(url, init, ms) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(function () { ctrl.abort(); }, ms);
+    try {
+      return await fetch(url, Object.assign({}, init, { signal: ctrl.signal }));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   async function callGeminiModel(settings, model, system, messages, options) {
     options = options || {};
     const grounding = options.grounding === true;
@@ -187,10 +199,16 @@ const LLM = (function () {
     /* Grounding with Google Search — Gemini 2.x only (Gemma can't ground). The
      * model retrieves live web results and folds the facts into its reply. */
     if (grounding && !isGemma) body.tools = [{ google_search: {} }];
+    const timeoutMs = grounding ? 120000 : 60000;
+    console.log('[llm] gemini call', { model: model, grounding: grounding, maxTokens: body.generationConfig.maxOutputTokens });
     let res;
     try {
-      res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      res = await fetchTimeout(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }, timeoutMs);
     } catch (e) {
+      if (e.name === 'AbortError') {
+        throw new Error('Gemini timed out after ' + Math.round(timeoutMs / 1000) + 's' +
+          (grounding ? ' — web search can be slow or blocked on this key; try again with “Search the web” off.' : ' — try again, or pick a faster model in Settings.'));
+      }
       throw new Error('Could not reach Gemini — check your connection.');
     }
     if (!res.ok) {
@@ -276,10 +294,11 @@ const LLM = (function () {
     };
     let res;
     try {
-      res = await fetch(base + '/chat/completions', {
+      res = await fetchTimeout(base + '/chat/completions', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-      });
+      }, 120000);
     } catch (e) {
+      if (e.name === 'AbortError') throw new Error('The local endpoint timed out after 120s.');
       throw new Error('Could not reach the local endpoint at ' + base +
         '. Is the backend running with its API enabled and CORS allowed for this origin? (Chrome required for local mode.)');
     }

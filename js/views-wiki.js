@@ -138,7 +138,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 8192, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false });
       const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
       let created = 0, updated = 0;
       for (const b of blocks) {
@@ -180,7 +180,7 @@ Views.wiki = async function (root, cid) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 8192, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false });
       const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
       let created = 0, updated = 0;
       for (const b of blocks) {
@@ -264,7 +264,7 @@ Views.wiki = async function (root, cid) {
       });
       const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
         (threatText ? '\n\n' + threatText : '');
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 8192, thinking: false });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false });
       const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
       let created = 0, updated = 0;
       for (const b of blocks) {
