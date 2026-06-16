@@ -97,18 +97,21 @@ Views.play = async function (root, cid) {
     if (found) {
       found.body = data.body || found.body;
       found.type = data.type || found.type;
+      if (data.hidden === true) found.hidden = true;
+      if (data.secret && String(data.secret).trim()) found.secret = String(data.secret).trim();
       (data.aliases || []).forEach(function (a) {
         if (a && found.aliases.indexOf(a) < 0 && a.toLowerCase() !== found.name.toLowerCase()) found.aliases.push(a);
       });
       (data.tags || []).forEach(function (t) { if (t && found.tags.indexOf(t) < 0) found.tags.push(t); });
       await Store.saveWiki(cid, found);
-      return { id: found.id, name: found.name, updated: true };
+      return { id: found.id, name: found.name, updated: true, hidden: !!found.hidden, secret: !!(found.secret && found.secret.trim()) };
     }
     const id = await Store.saveWiki(cid, {
       type: data.type || 'npc', name: name, aliases: data.aliases || [],
-      tags: data.tags || [], body: data.body || '', createdBy: 'llm', mergedInto: null
+      tags: data.tags || [], body: data.body || '', createdBy: 'llm', mergedInto: null,
+      hidden: data.hidden === true, secret: (data.secret && String(data.secret).trim()) || ''
     });
-    return { id: id, name: name, updated: false };
+    return { id: id, name: name, updated: false, hidden: data.hidden === true, secret: !!(data.secret && String(data.secret).trim()) };
   }
 
   /* ---------- the chat loop ---------- */
@@ -278,7 +281,7 @@ Views.play = async function (root, cid) {
       try {
         if (b.tag === 'gm-wiki') {
           const r = await upsertWiki(b.data);
-          if (r) msg.blockMeta[i] = { entryId: r.id, updated: r.updated };
+          if (r) msg.blockMeta[i] = { entryId: r.id, updated: r.updated, hidden: r.hidden };
         } else if (b.tag === 'gm-lookup') {
           lookups.push(b.data.query);
         } else if (b.tag === 'gm-scene') {
@@ -398,6 +401,12 @@ Views.play = async function (root, cid) {
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
     if (block.tag === 'gm-wiki') {
+      /* A hidden entry is GM-only — don't reveal its name/type in the log. */
+      if (meta.hidden || block.data.hidden === true) {
+        return h('div', { class: 'inline-notice wiki-notice' },
+          h('span', { class: 'notice-icon' }, '🔒'),
+          h('span', null, 'The GM noted something only it knows.'));
+      }
       return h('div', { class: 'inline-notice wiki-notice' },
         h('span', { class: 'notice-icon' }, '✦'),
         h('span', null, 'Wiki ' + (meta.updated ? 'updated' : 'entry') + ': '),
@@ -466,9 +475,12 @@ Views.play = async function (root, cid) {
       logEl.append(h('div', { class: 'empty-state' },
         h('p', { class: 'empty-title' }, campaign.name),
         h('p', null, pc ? 'The GM is ready to run ' + pc.name + '\'s story.' : 'The GM is ready to run your story.'),
+        h('p', { class: 'card-sub' }, 'Nothing is written until you press Begin. If you want, set up the wiki and run AI Plan first — add world info and let the AI design the threat\'s hidden countdown — then begin.'),
         keyMissing()
           ? h('p', null, h('a', { class: 'btn accent', href: '#/settings' }, 'Add your Gemini key to start'))
-          : beginBtn));
+          : h('div', { class: 'empty-actions' },
+              h('a', { class: 'btn', href: '#/wiki/' + cid }, 'Set up wiki & AI Plan'),
+              beginBtn)));
       return;
     }
     let lastSceneId = null;

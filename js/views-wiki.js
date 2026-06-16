@@ -5,8 +5,8 @@ Views.wiki = async function (root, cid) {
   root.dataset.screenLabel = 'Wiki View';
   const campaign = await Store.getCampaign(cid);
   let entries = await Store.listWiki(cid);
-  const TYPES = ['pc', 'npc', 'location', 'faction', 'item', 'event'];
-  let typeFilter = '', query = '';
+  const TYPES = ['pc', 'npc', 'location', 'faction', 'item', 'event', 'plan'];
+  let typeFilter = '', query = '', showHidden = false;
 
   root.innerHTML = '';
   const listEl = h('div', { class: 'card-grid wiki-grid' });
@@ -25,6 +25,14 @@ Views.wiki = async function (root, cid) {
     chips.append(c);
   });
 
+  const hiddenToggle = h('button', { class: 'chip hidden-toggle', title: 'Reveal GM-only entries the player can\'t normally see' }, '🔒 Show hidden');
+  hiddenToggle.addEventListener('click', function () {
+    showHidden = !showHidden;
+    hiddenToggle.classList.toggle('on', showHidden);
+    hiddenToggle.textContent = (showHidden ? '🔓 Hide GM-only' : '🔒 Show hidden');
+    renderList();
+  });
+
   const newBtn = h('button', { class: 'btn accent' }, 'New entry');
   newBtn.addEventListener('click', function () {
     openEditor({ type: 'npc', name: '', aliases: [], tags: [], body: '', createdBy: 'user', mergedInto: null });
@@ -39,21 +47,34 @@ Views.wiki = async function (root, cid) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runIntake(); }
   });
 
+  /* ---- AI Plan: generate / update a hidden, MotW-style threat plan ---- */
+  const planBtn = h('button', { class: 'btn' }, '✦ AI Plan');
+  planBtn.addEventListener('click', function () { openPlanModal(false); });
+  const updatePlanBtn = h('button', { class: 'btn' }, '↻ Update plan');
+  updatePlanBtn.addEventListener('click', function () { openPlanModal(true); });
+
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Wiki', h('span', { class: 'head-sub' }, campaign.name)),
-      newBtn),
+      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, newBtn)),
     h('details', { class: 'wiki-intake', open: '' },
       h('summary', null, 'Add world info'),
       h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
       worldTa,
       h('div', { class: 'wiki-intake-actions' }, intakeBtn, intakeStatus)),
-    h('div', { class: 'wiki-toolbar' }, search, chips),
+    h('div', { class: 'wiki-toolbar' }, search, chips, hiddenToggle),
     listEl));
 
+  function planExists() {
+    return entries.some(function (e) { return !e.mergedInto && e.type === 'plan'; });
+  }
+
   /* Name/alias-based upsert: update an existing entry if the name matches,
-   * otherwise create. Mirrors the GM's in-play wiki upsert. */
-  async function upsertFromData(data) {
+   * otherwise create. Mirrors the GM's in-play wiki upsert. opts.hiddenOnCreate
+   * marks NEW entries hidden (used by the AI Plan flow); existing entries keep
+   * their own hidden flag unless the block explicitly sets hidden:true. */
+  async function upsertFromData(data, opts) {
+    opts = opts || {};
     const name = String(data.name || '').trim();
     if (!name) return null;
     const list = await Store.listWiki(cid);
@@ -67,6 +88,8 @@ Views.wiki = async function (root, cid) {
       found.tags = found.tags || [];
       found.body = data.body || found.body;
       found.type = data.type || found.type;
+      if (data.hidden === true) found.hidden = true;
+      if (data.secret && String(data.secret).trim()) found.secret = String(data.secret).trim();
       (data.aliases || []).forEach(function (a) {
         if (a && found.aliases.indexOf(a) < 0 && a.toLowerCase() !== found.name.toLowerCase()) found.aliases.push(a);
       });
@@ -76,7 +99,9 @@ Views.wiki = async function (root, cid) {
     }
     await Store.saveWiki(cid, {
       type: data.type || 'npc', name: name, aliases: data.aliases || [],
-      tags: data.tags || [], body: data.body || '', createdBy: 'llm', mergedInto: null
+      tags: data.tags || [], body: data.body || '', createdBy: 'llm', mergedInto: null,
+      hidden: opts.hiddenOnCreate === true || data.hidden === true,
+      secret: (data.secret && String(data.secret).trim()) || ''
     });
     return { updated: false };
   }
@@ -121,9 +146,94 @@ Views.wiki = async function (root, cid) {
     intakeBtn.textContent = origLabel;
   }
 
+  function currentPlanBody() {
+    return entries.filter(function (e) { return !e.mergedInto && e.type === 'plan'; })
+      .map(function (e) { return e.name + ':\n' + (e.body || ''); }).join('\n\n');
+  }
+
+  async function buildRecap() {
+    const scenes = await Store.listScenes(cid);
+    const messages = await Store.listMessages(cid);
+    const parts = [];
+    scenes.filter(function (s) { return s.status === 'closed' && s.summary; })
+      .forEach(function (s) { parts.push('— ' + (s.title || 'Scene') + ': ' + s.summary); });
+    messages.filter(function (m) { return m.role === 'player' || m.role === 'gm'; })
+      .slice(-8).forEach(function (m) { parts.push((m.role === 'gm' ? 'GM: ' : 'Player: ') + m.content); });
+    let recap = parts.join('\n');
+    if (recap.length > 2800) recap = recap.slice(recap.length - 2800);
+    return recap;
+  }
+
+  function openPlanModal(isUpdate) {
+    if (isUpdate && !planExists()) { Toast('No plan yet — use “AI Plan” to create one first.'); return; }
+    const threatTa = h('textarea', { rows: '3', placeholder: isUpdate
+      ? 'What’s changed? Optional — e.g. “the players killed the lieutenant; escalate the timeline.” Leave blank to let the AI revise from what’s happened.'
+      : 'Who or what is the threat, and what do they want? Optional — leave blank to let the AI choose from your world.' });
+    const go = h('button', { class: 'btn accent' }, isUpdate ? 'Update plan' : 'Generate plan');
+    go.addEventListener('click', function () { runPlan(isUpdate, threatTa.value.trim(), go); });
+
+    const kids = [
+      h('h2', null, isUpdate ? 'Update the threat’s plan' : 'AI Plan — design the hidden threat'),
+      h('p', { class: 'card-sub' }, 'Builds a Monster of the Week-style countdown: a six-step plan the threat carries out unless the players disrupt it, plus its secrets — all stored as GM-only entries the player can’t see but the GM uses behind the scenes.'),
+      h('label', { class: 'form-row' }, h('span', null, isUpdate ? 'Adjustments' : 'Threat & goal'), threatTa)
+    ];
+    if (isUpdate) {
+      kids.push(h('label', { class: 'form-row' }, h('span', null, 'Current plan'),
+        h('textarea', { rows: '6', readonly: '' }, currentPlanBody())));
+    }
+    kids.push(h('div', { class: 'modal-actions' },
+      h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go));
+    Modal.open(h('div', { class: 'modal-wide' }, kids));
+  }
+
+  async function runPlan(isUpdate, threatText, btn) {
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.');
+      return;
+    }
+    btn.disabled = true;
+    const origLabel = btn.textContent;
+    btn.textContent = 'Designing…';
+    try {
+      const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
+      const recap = await buildRecap();
+      const system = Context.planPrompt({
+        genres: campaign.genres, setting: campaign.setting, threat: threatText,
+        isUpdate: isUpdate, existingNames: existingNames,
+        existingPlan: isUpdate ? currentPlanBody() : '', recap: recap
+      });
+      const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
+        (threatText ? '\n\n' + threatText : '');
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }] });
+      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      let created = 0, updated = 0;
+      for (const b of blocks) {
+        const r = await upsertFromData(b.data, { hiddenOnCreate: true });
+        if (!r) continue;
+        if (r.updated) updated++; else created++;
+      }
+      entries = await Store.listWiki(cid);
+      /* reveal hidden entries so the GM can review what was generated */
+      showHidden = true;
+      hiddenToggle.classList.add('on');
+      hiddenToggle.textContent = '🔓 Hide GM-only';
+      renderList();
+      Modal.close();
+      if (!blocks.length) Toast('The AI returned no plan entries — try again or add a threat description.');
+      else Toast('Plan ' + (isUpdate ? 'updated' : 'created') + ': ' + created + ' hidden entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '.');
+    } catch (e) {
+      console.error(e);
+      Toast(e.message);
+    }
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+
   function visible() {
     return entries.filter(function (e) {
       if (e.mergedInto) return false;
+      if (e.hidden && !showHidden) return false;
       if (typeFilter && e.type !== typeFilter) return false;
       if (query) {
         const hay = [e.name].concat(e.aliases || [], e.tags || []).join(' ').toLowerCase() + ' ' + (e.body || '').toLowerCase();
@@ -143,13 +253,17 @@ Views.wiki = async function (root, cid) {
       return;
     }
     v.forEach(function (e) {
-      const card = h('button', { class: 'wiki-card' },
+      const card = h('button', { class: 'wiki-card' + (e.hidden ? ' hidden' : '') },
         h('div', { class: 'wiki-card-top' },
           h('span', { class: 'tag-chip type-' + e.type }, e.type),
+          e.hidden ? h('span', { class: 'wiki-hidden-badge', title: 'Hidden from the player (GM only)' }, '🔒 hidden') : null,
+          (!e.hidden && showHidden && e.secret && e.secret.trim()) ? h('span', { class: 'wiki-hidden-badge', title: 'Has a GM-only secret section' }, '🔒 secret') : null,
           e.createdBy === 'llm' ? h('span', { class: 'wiki-by' }, 'GM') : null),
         h('h2', null, e.name),
         (e.aliases && e.aliases.length) ? h('p', { class: 'card-meta' }, 'aka ' + e.aliases.join(', ')) : null,
         h('p', { class: 'wiki-body-preview' }, (e.body || '').slice(0, 160) + ((e.body || '').length > 160 ? '…' : '')),
+        (showHidden && !e.hidden && e.secret && e.secret.trim())
+          ? h('p', { class: 'wiki-secret-preview' }, '🔒 ' + e.secret.trim().slice(0, 160) + (e.secret.trim().length > 160 ? '…' : '')) : null,
         (e.tags && e.tags.length) ? h('p', { class: 'card-meta' }, '# ' + e.tags.join('  # ')) : null);
       card.addEventListener('click', function () { openEditor(e); });
       listEl.append(card);
@@ -166,6 +280,9 @@ Views.wiki = async function (root, cid) {
     const aliasInp = h('input', { type: 'text', value: (e.aliases || []).join(', '), placeholder: 'comma-separated' });
     const tagInp = h('input', { type: 'text', value: (e.tags || []).join(', '), placeholder: 'comma-separated' });
     const bodyTa = h('textarea', { rows: '7' }, e.body || '');
+    const secretTa = h('textarea', { rows: '4', class: 'secret-input', placeholder: 'GM-only notes the player never sees — twists, true intentions, what they don\'t know yet. The public Body above stays visible; this stays hidden.' }, e.secret || '');
+    const hiddenChk = h('input', { type: 'checkbox' });
+    hiddenChk.checked = !!e.hidden;
 
     const save = h('button', { class: 'btn accent' }, 'Save');
     save.addEventListener('click', async function () {
@@ -175,6 +292,8 @@ Views.wiki = async function (root, cid) {
       e.aliases = aliasInp.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
       e.tags = tagInp.value.split(',').map(function (s) { return s.trim(); }).filter(Boolean);
       e.body = bodyTa.value.trim();
+      e.secret = secretTa.value.trim();
+      e.hidden = hiddenChk.checked;
       e.createdBy = e.createdBy || 'user';
       await Store.saveWiki(cid, e);
       entries = await Store.listWiki(cid);
@@ -213,6 +332,9 @@ Views.wiki = async function (root, cid) {
       h('label', { class: 'form-row' }, h('span', null, 'Aliases'), aliasInp),
       h('label', { class: 'form-row' }, h('span', null, 'Tags'), tagInp),
       h('label', { class: 'form-row' }, h('span', null, 'Body'), bodyTa),
+      h('label', { class: 'form-row' }, h('span', null, 'Secret (GM only)'), secretTa),
+      h('label', { class: 'inline-pair hidden-row' }, hiddenChk,
+        h('span', null, 'Hide the WHOLE entry from the player (GM only). Leave off to keep the entry public but keep the Secret section hidden.')),
       actions));
   }
 

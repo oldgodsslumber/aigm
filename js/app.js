@@ -1,4 +1,4 @@
-/* AI GM — shell: router, modal, toast, boot, demo pack seeding. */
+/* AI GM — shell: router, modal, toast, boot. */
 
 const Modal = (function () {
   let root = null;

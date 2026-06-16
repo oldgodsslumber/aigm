@@ -42,6 +42,10 @@ const Context = (function () {
     ].concat(WIKI_TYPE_GUIDE).concat([
       'Then keep them current: when a fact changes, update the existing entry (same name) rather than creating a duplicate. Auto-creates an entry; updates if the name already exists:'
     ]).concat(WIKI_BLOCK_SPEC).concat([
+      'Add "hidden": true to a gm-wiki block when an ENTIRE entry is a secret the player must NOT learn yet (a hidden enemy, a place they haven\'t discovered). You still use hidden entries to drive the world, but never reveal them outright — only through what happens in the fiction.',
+      'To attach a secret to an entry that stays publicly known, add a "secret" field on a gm-wiki block with that entry\'s EXACT name (do NOT set "hidden"). The public "body" stays visible to the player; the "secret" text is GM-only — use it to plant a twist about a known person, place, or item without spoiling their public page. Example: {"name": "Mayor Crane", "secret": "She secretly leads the cult and ordered the disappearances."}',
+      '',
+      'THE THREAT\'S PLAN — Some entries are marked GM-ONLY HIDDEN KNOWLEDGE: the player does not know them. If a hidden plan / countdown entry is present, treat it as a Monster of the Week-style countdown: the threat works through its steps as time passes and scenes change, escalating toward its goal, UNLESS the players act to disrupt it. Advance it at a believable pace, show its effects in the world, and never reveal the plan directly — only its consequences. As the plan develops or the players interfere, record the changes with hidden gm-wiki entries.',
       '',
       'LOOKUP — use ONLY when you genuinely need a specific established fact that is NOT already in your context. The relevant wiki entries and recent turns are already provided above, so most of the time you already have what you need. Do NOT look things up speculatively, do NOT look up something already shown above, and do NOT look up a brand-new detail you can simply invent now and record with gm-wiki. A lookup can cost the player an extra, limited request — so prefer to proceed with what you have, and never emit a lookup in the same reply as a full narration.',
       '```gm-lookup',
@@ -81,6 +85,54 @@ const Context = (function () {
       lines = lines.concat(['',
         'These entries already exist — REUSE the exact same name when the notes refer to them so they update instead of duplicating:',
         opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
+    }
+    lines = lines.concat(['', 'These are facts the player knows; do NOT set "hidden" or "secret" on any of them.']);
+    return lines.join('\n');
+  }
+
+  /* System prompt for the Wiki tab's "AI Plan" / "Update plan" buttons.
+   * Designs a hidden, Monster of the Week-style threat plan: a 6-step
+   * countdown plus supporting secrets, all filed as hidden wiki entries the
+   * GM uses via RAG but the player never sees. Output is gm-wiki blocks only. */
+  function planPrompt(opts) {
+    opts = opts || {};
+    let lines = [
+      'You are the Keeper (GM) of a solo tabletop RPG, designing the hidden machinery behind the story — the kind of behind-the-screen plan a Monster of the Week Keeper prepares. This is NOT a scene and does NOT advance play. Do NOT narrate, do NOT address the player, do NOT add commentary.',
+      '',
+      'Design the central THREAT and its plan. ' + (opts.threat && String(opts.threat).trim()
+        ? 'The player has specified the threat / goal — build around it: ' + String(opts.threat).trim()
+        : 'Choose the most compelling antagonist or looming danger that fits the world and what has happened so far.'),
+      '',
+      'Produce, as hidden wiki entries:',
+      '1. ONE entry of type "plan" — the COUNTDOWN. Its body states the threat, what it ultimately wants (its doom/goal), and EXACTLY SIX escalating steps it takes if the players never interfere, labelled in order: Day, Shadows, Dawn, Dusk, Sunset, Nightfall. Each step is one concrete development; the later steps are worse; Nightfall is the threat fully achieving its goal. The players do not act in this plan — it is what unfolds unopposed.',
+      '2. Several SUPPORTING entries — the threat itself and its key pieces (true nature, secret motive, hidden allies, secret locations or items). Use the appropriate types (npc, faction, location, item, event). Keep distinct things in separate entries.',
+      '',
+      'Keep all of this GM-ONLY. Two ways to do that:',
+      '- For things that are ENTIRELY secret (the threat itself, hidden allies, undiscovered places, and the countdown "plan" entry), emit a NEW entry with "hidden": true.',
+      '- To plant a secret about something the player ALREADY knows, emit a gm-wiki block with that entry\'s EXACT existing name and a "secret" field (do NOT set "hidden") — this keeps its public page intact while filing the twist as GM-only. Example: {"name": "Mayor Crane", "secret": "She secretly leads the cult driving the countdown."}',
+      'Never put a spoiler in the public "body" of an existing entry.',
+      '',
+      'Output ONLY gm-wiki fenced blocks, one object per block, nothing else:'
+    ].concat(WIKI_BLOCK_SPEC);
+
+    const world = [];
+    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
+    if (world.length) lines = lines.concat(['', 'World context:', world.join('\n')]);
+
+    if (opts.existingNames && opts.existingNames.length) {
+      lines = lines.concat(['', 'Names already in the wiki (reference these for consistency; reuse the EXACT name only when updating a hidden entry you previously made):',
+        opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
+    }
+    if (opts.recap && String(opts.recap).trim()) {
+      lines = lines.concat(['', 'WHAT HAS HAPPENED SO FAR (ground the plan in this):', String(opts.recap).trim()]);
+    }
+    if (opts.isUpdate) {
+      lines = lines.concat(['',
+        'This is an UPDATE to an existing plan. Revise it: mark steps already triggered, adjust or replace future steps to reflect how the players have interfered or how the situation has developed, and re-emit the "plan" countdown entry (same name) plus any supporting entries that changed. Keep entry names stable so they update in place.']);
+      if (opts.existingPlan && String(opts.existingPlan).trim()) {
+        lines = lines.concat(['', 'THE CURRENT PLAN (revise this):', String(opts.existingPlan).trim()]);
+      }
     }
     return lines.join('\n');
   }
@@ -175,15 +227,40 @@ const Context = (function () {
       parts.push(txt);
     }
 
-    /* 4 + 5. wiki: pinned, then name-matched in recent turns */
-    const wiki = (opts.wiki || []).filter(function (e) { return !e.mergedInto; });
+    const allWiki = (opts.wiki || []).filter(function (e) { return !e.mergedInto; });
+    const hiddenWiki = allWiki.filter(function (e) { return e.hidden; });
+    const publicWiki = allWiki.filter(function (e) { return !e.hidden; });
+    const secretWiki = publicWiki.filter(function (e) { return e.secret && String(e.secret).trim(); });
+
+    /* GM-ONLY hidden knowledge — the player does not know these. Always tried,
+     * with the threat plan/countdown first so it reliably reaches the GM.
+     * Includes fully-hidden entries AND the secret sections of public ones. */
+    if (hiddenWiki.length || secretWiki.length) {
+      const ordered = hiddenWiki.slice().sort(function (a, b) {
+        return (a.type === 'plan' ? 0 : 1) - (b.type === 'plan' ? 0 : 1);
+      });
+      const hiddenLines = [];
+      ordered.forEach(function (e) {
+        const line = entryText(e);
+        if (est(line) <= room) { hiddenLines.push(line); room -= est(line); }
+      });
+      secretWiki.forEach(function (e) {
+        const line = '[' + e.type + '] ' + e.name + ' — SECRET (public page does not show this): ' + String(e.secret).trim();
+        if (est(line) <= room) { hiddenLines.push(line); room -= est(line); }
+      });
+      if (hiddenLines.length) {
+        parts.push('GM-ONLY HIDDEN KNOWLEDGE (the player does NOT know these — drive the world and the threat with them, but reveal them only through what happens in the fiction; never state them outright)\n' + hiddenLines.join('\n'));
+      }
+    }
+
+    /* 4 + 5. wiki: pinned, then name-matched in recent turns (player-known only) */
     const scene = (opts.scenes || []).find(function (s) { return s.id === opts.currentSceneId; });
     const pinnedIds = (scene && scene.pinnedEntryIds) || [];
     const recent = (opts.messages || []).slice(-6).map(function (m) { return m.content; }).join('\n');
-    const matched = matchWiki(wiki, recent);
+    const matched = matchWiki(publicWiki, recent);
     const seen = {};
     const wikiLines = [];
-    pinnedIds.map(function (id) { return wiki.find(function (e) { return e.id === id; }); })
+    pinnedIds.map(function (id) { return publicWiki.find(function (e) { return e.id === id; }); })
       .concat(matched)
       .forEach(function (e) {
         if (!e || seen[e.id]) return;
@@ -224,5 +301,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, planPrompt: planPrompt, est: est };
 })();
