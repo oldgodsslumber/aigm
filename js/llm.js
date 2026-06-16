@@ -146,7 +146,7 @@ const LLM = (function () {
     return 'Gemini error (' + status + ')' + (msg ? ': ' + msg : '');
   }
 
-  async function callGeminiModel(settings, model, system, messages) {
+  async function callGeminiModel(settings, model, system, messages, grounding) {
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
       encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(settings.geminiKey);
 
@@ -176,6 +176,9 @@ const LLM = (function () {
       }
     }
     if (!isGemma) body.safetySettings = SAFETY_OFF;
+    /* Grounding with Google Search — Gemini 2.x only (Gemma can't ground). The
+     * model retrieves live web results and folds the facts into its reply. */
+    if (grounding && !isGemma) body.tools = [{ google_search: {} }];
     let res;
     try {
       res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -200,10 +203,29 @@ const LLM = (function () {
     return text;
   }
 
-  async function gemini(settings, system, messages) {
+  async function gemini(settings, system, messages, options) {
     if (!settings.geminiKey) throw new Error('No Gemini API key set. Add yours in Settings — it stays on this device.');
+    options = options || {};
 
     const chosen = settings.geminiModel || 'gemini-2.5-flash';
+
+    /* Grounded request: pin to a Gemini model (Gemma can't search). Fall back
+     * only to Flash Lite on a 429 — never to a non-grounding model. */
+    if (options.grounding) {
+      let active = /^gemini/i.test(chosen) ? chosen : 'gemini-2.5-flash';
+      let text;
+      try {
+        text = await callGeminiModel(settings, active, system, messages, true);
+      } catch (err) {
+        if (err.status !== 429 || active === 'gemini-2.5-flash-lite') throw err;
+        markExhausted(active);
+        active = 'gemini-2.5-flash-lite';
+        text = await callGeminiModel(settings, active, system, messages, true);
+      }
+      const used = bumpUsage(active);
+      return { text: text, model: active, label: labelFor(active), used: used, limit: limitFor(active) };
+    }
+
     let active = pickActiveModel(chosen);
     if (active !== chosen) {
       console.log('[llm] ' + chosen + ' exhausted for today — falling through to ' + active);
@@ -269,7 +291,7 @@ const LLM = (function () {
       const s = opts.settings;
       const run = function () {
         if (s.backend === 'local') return local(s, opts.system, opts.messages);
-        return gemini(s, opts.system, opts.messages);
+        return gemini(s, opts.system, opts.messages, { grounding: opts.grounding === true });
       };
       let lastErr = null;
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {

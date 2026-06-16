@@ -47,6 +47,16 @@ Views.wiki = async function (root, cid) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runIntake(); }
   });
 
+  /* ---- "Generate from a topic": pull a setting/franchise in via the LLM ---- */
+  const topicInp = h('input', { type: 'text', class: 'topic-input', placeholder: 'A setting or franchise to import — e.g. “Star Wars: the Galactic Civil War” or “Marvel: the Avengers”' });
+  const webChk = h('input', { type: 'checkbox' });
+  const topicBtn = h('button', { class: 'btn accent' }, 'Generate entries');
+  const topicStatus = h('span', { class: 'card-sub intake-status' });
+  topicBtn.addEventListener('click', runTopic);
+  topicInp.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter') { e.preventDefault(); runTopic(); }
+  });
+
   /* ---- AI Plan: generate / update a hidden, MotW-style threat plan ---- */
   const planBtn = h('button', { class: 'btn' }, '✦ AI Plan');
   planBtn.addEventListener('click', function () { openPlanModal(false); });
@@ -61,7 +71,14 @@ Views.wiki = async function (root, cid) {
       h('summary', null, 'Add world info'),
       h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
       worldTa,
-      h('div', { class: 'wiki-intake-actions' }, intakeBtn, intakeStatus)),
+      h('div', { class: 'wiki-intake-actions' }, intakeBtn, intakeStatus),
+      h('div', { class: 'topic-gen' },
+        h('p', { class: 'card-sub' }, 'Or pull a setting in from a topic — the AI writes the entries. Tick “Search the web” for live, grounded facts (Gemini only).'),
+        topicInp,
+        h('div', { class: 'wiki-intake-actions' },
+          topicBtn,
+          h('label', { class: 'inline-pair' }, webChk, h('span', null, 'Search the web')),
+          topicStatus))),
     h('div', { class: 'wiki-toolbar' }, search, chips, hiddenToggle),
     listEl));
 
@@ -144,6 +161,48 @@ Views.wiki = async function (root, cid) {
     }
     intakeBtn.disabled = false;
     intakeBtn.textContent = origLabel;
+  }
+
+  async function runTopic() {
+    const topic = topicInp.value.trim();
+    if (!topic || topicBtn.disabled) return;
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.');
+      return;
+    }
+    const grounded = webChk.checked && settings.backend === 'gemini';
+    if (webChk.checked && !grounded) Toast('Web search needs the Gemini backend — generating from model knowledge instead.');
+    topicBtn.disabled = true;
+    const origLabel = topicBtn.textContent;
+    topicBtn.textContent = grounded ? 'Searching…' : 'Generating…';
+    topicStatus.textContent = '';
+    try {
+      const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
+      const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded });
+      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      let created = 0, updated = 0;
+      for (const b of blocks) {
+        const r = await upsertFromData(b.data);
+        if (!r) continue;
+        if (r.updated) updated++; else created++;
+      }
+      entries = await Store.listWiki(cid);
+      renderList();
+      if (!blocks.length) {
+        topicStatus.textContent = 'No entries generated — try a more specific topic.';
+      } else {
+        topicInp.value = '';
+        topicStatus.textContent = created + ' added, ' + updated + ' updated.';
+        Toast(created + ' entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '.');
+      }
+    } catch (e) {
+      console.error(e);
+      Toast(e.message);
+    }
+    topicBtn.disabled = false;
+    topicBtn.textContent = origLabel;
   }
 
   function currentPlanBody() {

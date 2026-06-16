@@ -90,6 +90,38 @@ const Context = (function () {
     return lines.join('\n');
   }
 
+  /* System prompt for the Wiki tab's "Generate from a topic" box. The player
+   * names a setting/franchise; the model writes a starter set of wiki entries
+   * from its knowledge (and, when grounded, live Google Search results). */
+  function wikiTopicPrompt(opts) {
+    opts = opts || {};
+    let lines = [
+      'You are a worldbuilding archivist for a tabletop RPG campaign. The player has named a setting, franchise, era, or topic. Generate a useful starter set of wiki entries about it. This is NOT a scene and does NOT advance any plot — do NOT narrate, address the player, or add any commentary.',
+      '',
+      (opts.grounded
+        ? 'Use the Google Search results available to you to keep names and facts accurate and current. Record facts only — do NOT cite sources, list URLs, or mention that you searched.'
+        : 'Draw on your knowledge of the topic. Prefer well-established, canonical facts; if you are unsure of a specific detail, keep the entry general rather than inventing specifics.'),
+      '',
+      'Cover the most important and iconic entities for the topic — aim for roughly 12 to 25 entries unless the player\'s request implies otherwise. Keep distinct things in separate entries, one block each. Entry types:'
+    ].concat(WIKI_TYPE_GUIDE).concat([
+      'Use this block format exactly (valid JSON, one object per block):'
+    ]).concat(WIKI_BLOCK_SPEC);
+
+    lines = lines.concat(['', 'These are facts the player knows; do NOT set "hidden" or "secret".']);
+    lines = lines.concat(['', 'TOPIC: ' + String(opts.topic || '').trim()]);
+
+    const world = [];
+    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
+    if (world.length) lines = lines.concat(['', 'Campaign world context (align tone/era where relevant):', world.join('\n')]);
+
+    if (opts.existingNames && opts.existingNames.length) {
+      lines = lines.concat(['', 'Already in the wiki — reuse the EXACT name to update instead of duplicating, and skip ones already well covered:',
+        opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
+    }
+    return lines.join('\n');
+  }
+
   /* System prompt for the Wiki tab's "AI Plan" / "Update plan" buttons.
    * Designs a hidden, Monster of the Week-style threat plan: a 6-step
    * countdown plus supporting secrets, all filed as hidden wiki entries the
@@ -301,5 +333,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, planPrompt: planPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, planPrompt: planPrompt, est: est };
 })();

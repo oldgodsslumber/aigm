@@ -503,6 +503,8 @@ main { min-height: calc(100vh - 52px); }
 .wiki-intake > summary::-webkit-details-marker { color: var(--dim); }
 .wiki-intake .card-sub { margin: 8px 0; }
 .world-intake-input { width: 100%; box-sizing: border-box; resize: vertical; }
+.topic-gen { margin-top: 14px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.topic-input { width: 100%; box-sizing: border-box; }
 .wiki-intake-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
 .intake-status { margin: 0; }
 .wiki-toolbar { display: flex; gap: 14px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
