@@ -75,7 +75,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build 20260616c — Play view has Edit/Regenerate on GM replies', 'color:#9cc29c');
+  console.log('%c[AI GM] build 20260616d — Play view has Edit/Regenerate on GM replies', 'color:#9cc29c');
   Store.init();
 
   window.addEventListener('hashchange', function () { Router.go(); });

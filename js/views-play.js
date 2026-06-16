@@ -60,42 +60,45 @@ Views.play = async function (root, cid) {
   });
 
   /* ---------- helpers ---------- */
-  /* Strip a weak model's chain-of-thought / planning dump, keeping only the
-   * final narration. The real reply is the prose AFTER the last scratchpad
-   * marker line (echoed prompt bullets, "Label:*" planning, self-checks).
-   * Any gm-* fenced blocks are preserved so wiki/scene handling still works. */
+  /* Strip a weak model's chain-of-thought / planning dump, keeping the WHOLE
+   * narration. Conservative by design — losing story is worse than leaving a
+   * stray line. Two stages, both preserving gm-* blocks:
+   *  1. The scratchpad reliably ENDS with a self-review checklist ("...? Yes").
+   *     If present, the narration is everything after the LAST such line.
+   *     (Narration almost never contains "? Yes", so this won't cut story.)
+   *  2. Otherwise, only drop bullet/header lines and strip "Label:*" prefixes
+   *     (keeping the prose after them) — never delete a prose line. */
   function stripScratchpad(text) {
     const raw = String(text || '');
     const fences = raw.match(/```gm-[a-z]+[\s\S]*?```/g) || [];
-    /* don't touch a reply that already used the proper block protocol cleanly */
-    const lines = raw.replace(/```gm-[a-z]+[\s\S]*?```/g, '').split(/\r?\n/);
-    const isMeta = function (ln) {
-      const s = ln.trim();
-      if (!s) return false;
-      if (/^[\*\-•]\s/.test(s)) return true;                                   // bullet list
-      if (/^#{1,6}\s/.test(s)) return true;                                    // markdown header
-      if (/\?\s*(yes|no)\b/i.test(s)) return true;                             // self-check "...? Yes"
-      if (/^[A-Z][A-Za-z ’'\/]{0,28}:\*/.test(s)) return true;                 // "Opening:* ...", "The Shift:* ..."
-      if (/^(scene|action|antagonists?|hook|opening|the shift|the encounter|idea|setup|setting|notes?|beats?|plan|goal|checklist|approach|structure)\b[^.!?]{0,40}:/i.test(s)) return true;
-      return false;
+    const body = raw.replace(/```gm-[a-z]+[\s\S]*?```/g, '');
+    const lines = body.split(/\r?\n/);
+    const reattach = function (s) {
+      let out = s.trim();
+      fences.forEach(function (f) { if (out.indexOf(f) < 0) out += '\n\n' + f; });
+      return out;
     };
-    let lastMeta = -1;
-    for (let i = 0; i < lines.length; i++) if (isMeta(lines[i])) lastMeta = i;
 
-    let out = raw;
-    if (lastMeta >= 0) {
-      const tail = lines.slice(lastMeta + 1).join('\n').trim();
-      if (tail.length >= 60) out = tail;
-      else {
-        const kept = lines.filter(function (ln) { return !isMeta(ln); }).join('\n').trim();
-        out = kept.length >= 60 ? kept : raw.trim();
-      }
-    } else {
-      out = raw.trim();
+    let lastCheck = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (/\?\s*(yes|no)\b/i.test(lines[i])) lastCheck = i;
     }
-    /* re-attach any structured blocks the cleaning may have removed */
-    fences.forEach(function (f) { if (out.indexOf(f) < 0) out += '\n\n' + f; });
-    return out;
+    if (lastCheck >= 0) {
+      const tail = lines.slice(lastCheck + 1).join('\n').trim();
+      if (tail.length >= 60) return reattach(tail);
+    }
+
+    /* fallback: drop only obvious scratchpad, keep every prose line */
+    const kept = lines.map(function (ln) {
+      const s = ln.trim();
+      if (!s) return ln;
+      if (/^[\*\-•]\s/.test(s)) return null;                 // bullet
+      if (/^#{1,6}\s/.test(s)) return null;                  // header
+      const m = s.match(/^[A-Z][A-Za-z ’'\/]{0,28}:\*\s*(.*)$/); // "Opening:* <prose>"
+      if (m) return m[1] ? m[1] : null;
+      return ln;
+    }).filter(function (ln) { return ln !== null; }).join('\n').replace(/\n{3,}/g, '\n\n');
+    return reattach(kept.length ? kept : raw);
   }
 
   function setBusy(b) {
@@ -284,12 +287,19 @@ Views.play = async function (root, cid) {
       Modal.close();
       renderLog();
     });
+    const actions = h('div', { class: 'modal-actions' },
+      h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'));
+    /* if this reply was auto-cleaned, let the player pull back the full original */
+    if (m.raw && m.raw !== m.content) {
+      const orig = h('button', { class: 'btn' }, 'Load original (uncleaned)');
+      orig.addEventListener('click', function () { ta.value = m.raw; ta.focus(); });
+      actions.append(orig);
+    }
+    actions.append(save);
     Modal.open(h('div', { class: 'modal-wide' },
       h('h2', null, 'Edit the scene'),
       h('p', { class: 'card-sub' }, 'Edit the GM\'s text directly. Any fenced blocks (wiki, scene) are shown as written — leave them intact unless you mean to change them.'),
-      ta,
-      h('div', { class: 'modal-actions' },
-        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), save)));
+      ta, actions));
   }
 
   /* regenerate the latest GM reply: rewind to the trigger and re-run the turn */
@@ -326,14 +336,18 @@ Views.play = async function (root, cid) {
       }
       /* Weak free models (Gemma) have no separate thinking channel and dump
        * their scratchpad — echoed prompt, planning, self-checks — into the
-       * reply, with the real narration last. Strip that for those models. */
-      const replyText = /^gemma/i.test(res.model || '') ? stripScratchpad(res.text) : res.text;
+       * reply, with the real narration last. Strip that for those models, but
+       * keep the raw reply on the message so nothing is ever truly lost. */
+      const isGemma = /^gemma/i.test(res.model || '');
+      const replyText = isGemma ? stripScratchpad(res.text) : res.text;
+      if (isGemma) console.log('[AI GM] gemma reply cleaned ' + res.text.length + '→' + replyText.length + ' chars\nRAW:\n' + res.text);
       const parsed = Tags.parse(replyText);
       const msg = {
         role: 'gm', content: replyText, sceneId: scene.id,
         blocks: parsed.blocks.map(function (b) { return { tag: b.tag, data: b.data }; }),
         blockMeta: {}
       };
+      if (isGemma && replyText !== res.text) msg.raw = res.text;
       await Store.addMessage(cid, msg);
       messages = await Store.listMessages(cid);
       await processBlocks(messages[messages.length - 1], depth);
