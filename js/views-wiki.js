@@ -248,6 +248,38 @@ Views.wiki = async function (root, cid) {
     topicBtn.textContent = origLabel;
   }
 
+  /* Regenerate a single entry's content via the LLM, preserving its identity
+   * (name, type, hidden/secret, pins, createdBy) — only body/aliases/tags change. */
+  async function regenerateEntry(e, btn) {
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.');
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = '↻ …'; }
+    try {
+      const system = Context.entryPrompt({ name: e.name, type: e.type, genres: campaign.genres, setting: campaign.setting });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Write the wiki entry for: ' + e.name }], maxTokens: 1024, thinking: false, jsonMode: true });
+      const datas = parseWikiBlocks(res.text);
+      const d = datas.find(function (x) { return x.name && x.name.toLowerCase() === String(e.name).toLowerCase(); }) || datas[0];
+      console.log('[wiki] regen "' + e.name + '" parsed ' + datas.length + ' (' + (res.text || '').length + ' chars)', d ? '' : res.text);
+      if (!d || !d.body) { Toast('Regeneration returned nothing usable — try again.'); return; }
+      const full = await Store.getWiki(cid, e.id);
+      if (!full) { Toast('Entry no longer exists.'); return; }
+      full.body = d.body;
+      if (Array.isArray(d.aliases) && d.aliases.length) full.aliases = d.aliases;
+      if (Array.isArray(d.tags) && d.tags.length) full.tags = d.tags;
+      await Store.saveWiki(cid, full);
+      entries = await Store.listWiki(cid);
+      renderList();
+      Toast('“' + e.name + '” regenerated.');
+    } catch (err) {
+      console.error(err);
+      Toast(err.message);
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Regenerate'; }
+    }
+  }
+
   function currentPlanBody() {
     return entries.filter(function (e) { return !e.mergedInto && e.type === 'plan'; })
       .map(function (e) { return e.name + ':\n' + (e.body || ''); }).join('\n\n');
@@ -352,7 +384,14 @@ Views.wiki = async function (root, cid) {
       return;
     }
     v.forEach(function (e) {
-      const card = h('button', { class: 'wiki-card' + (e.hidden ? ' hidden' : '') },
+      const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
+      editBtn.addEventListener('click', function (ev) { ev.stopPropagation(); openEditor(e); });
+      const regenBtn = h('button', { class: 'btn small ghost' }, '↻ Regenerate');
+      regenBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        regenerateEntry(e, regenBtn);
+      });
+      const card = h('div', { class: 'wiki-card' + (e.hidden ? ' hidden' : '') },
         h('div', { class: 'wiki-card-top' },
           h('span', { class: 'tag-chip type-' + e.type }, e.type),
           e.hidden ? h('span', { class: 'wiki-hidden-badge', title: 'Hidden from the player (GM only)' }, '🔒 hidden') : null,
@@ -363,7 +402,8 @@ Views.wiki = async function (root, cid) {
         h('p', { class: 'wiki-body-preview' }, (e.body || '').slice(0, 160) + ((e.body || '').length > 160 ? '…' : '')),
         (showHidden && !e.hidden && e.secret && e.secret.trim())
           ? h('p', { class: 'wiki-secret-preview' }, '🔒 ' + e.secret.trim().slice(0, 160) + (e.secret.trim().length > 160 ? '…' : '')) : null,
-        (e.tags && e.tags.length) ? h('p', { class: 'card-meta' }, '# ' + e.tags.join('  # ')) : null);
+        (e.tags && e.tags.length) ? h('p', { class: 'card-meta' }, '# ' + e.tags.join('  # ')) : null,
+        h('div', { class: 'wiki-card-actions' }, editBtn, regenBtn));
       card.addEventListener('click', function () { openEditor(e); });
       listEl.append(card);
     });
