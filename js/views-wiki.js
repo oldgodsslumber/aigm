@@ -30,12 +30,96 @@ Views.wiki = async function (root, cid) {
     openEditor({ type: 'npc', name: '', aliases: [], tags: [], body: '', createdBy: 'user', mergedInto: null });
   });
 
+  /* ---- "Add world info": freeform notes filed into entries by the LLM ---- */
+  const worldTa = h('textarea', { class: 'world-intake-input', rows: '4', placeholder: 'Paste or type anything about your world — characters, places, factions, history, items. This won’t start a scene or advance the story; it just gets filed into the wiki as entries.' });
+  const intakeBtn = h('button', { class: 'btn accent' }, 'Add to wiki');
+  const intakeStatus = h('span', { class: 'card-sub intake-status' });
+  intakeBtn.addEventListener('click', runIntake);
+  worldTa.addEventListener('keydown', function (e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runIntake(); }
+  });
+
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Wiki', h('span', { class: 'head-sub' }, campaign.name)),
       newBtn),
+    h('details', { class: 'wiki-intake', open: '' },
+      h('summary', null, 'Add world info'),
+      h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
+      worldTa,
+      h('div', { class: 'wiki-intake-actions' }, intakeBtn, intakeStatus)),
     h('div', { class: 'wiki-toolbar' }, search, chips),
     listEl));
+
+  /* Name/alias-based upsert: update an existing entry if the name matches,
+   * otherwise create. Mirrors the GM's in-play wiki upsert. */
+  async function upsertFromData(data) {
+    const name = String(data.name || '').trim();
+    if (!name) return null;
+    const list = await Store.listWiki(cid);
+    const found = list.find(function (e) {
+      if (e.mergedInto) return false;
+      const names = [e.name].concat(e.aliases || []).map(function (n) { return n.toLowerCase(); });
+      return names.indexOf(name.toLowerCase()) >= 0;
+    });
+    if (found) {
+      found.aliases = found.aliases || [];
+      found.tags = found.tags || [];
+      found.body = data.body || found.body;
+      found.type = data.type || found.type;
+      (data.aliases || []).forEach(function (a) {
+        if (a && found.aliases.indexOf(a) < 0 && a.toLowerCase() !== found.name.toLowerCase()) found.aliases.push(a);
+      });
+      (data.tags || []).forEach(function (t) { if (t && found.tags.indexOf(t) < 0) found.tags.push(t); });
+      await Store.saveWiki(cid, found);
+      return { updated: true };
+    }
+    await Store.saveWiki(cid, {
+      type: data.type || 'npc', name: name, aliases: data.aliases || [],
+      tags: data.tags || [], body: data.body || '', createdBy: 'llm', mergedInto: null
+    });
+    return { updated: false };
+  }
+
+  async function runIntake() {
+    const text = worldTa.value.trim();
+    if (!text || intakeBtn.disabled) return;
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.');
+      return;
+    }
+    intakeBtn.disabled = true;
+    const origLabel = intakeBtn.textContent;
+    intakeBtn.textContent = 'Reading…';
+    intakeStatus.textContent = '';
+    try {
+      const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
+      const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }] });
+      const blocks = Tags.parse(res.text).blocks.filter(function (b) { return b.tag === 'gm-wiki'; });
+      let created = 0, updated = 0;
+      for (const b of blocks) {
+        const r = await upsertFromData(b.data);
+        if (!r) continue;
+        if (r.updated) updated++; else created++;
+      }
+      entries = await Store.listWiki(cid);
+      renderList();
+      if (!blocks.length) {
+        intakeStatus.textContent = 'No entries found in that text — try adding specific names and details.';
+      } else {
+        worldTa.value = '';
+        intakeStatus.textContent = created + ' added, ' + updated + ' updated.';
+        Toast(created + ' entr' + (created === 1 ? 'y' : 'ies') + ' added' + (updated ? ', ' + updated + ' updated' : '') + '.');
+      }
+    } catch (e) {
+      console.error(e);
+      Toast(e.message);
+    }
+    intakeBtn.disabled = false;
+    intakeBtn.textContent = origLabel;
+  }
 
   function visible() {
     return entries.filter(function (e) {

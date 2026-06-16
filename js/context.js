@@ -14,6 +14,22 @@ const Context = (function () {
 
   function est(s) { return Math.ceil(String(s || '').length / 4); }
 
+  /* Shared between the play protocol and the wiki-intake prompt so the two
+   * can't drift. Per-type triggers are deliberately low-threshold. */
+  const WIKI_TYPE_GUIDE = [
+    '- pc — the player character; keep a single entry with their current condition, injuries, inventory, resources, location, and key relationships.',
+    '- npc — EVERY named or distinctly described person, even a one-line bartender or a guard. Give nameless figures a descriptive handle (e.g. "the scarred dockmaster").',
+    '- location — every distinct place: a town, a tavern, a room, a road, a region.',
+    '- faction — every organization, crew, family, cult, guild, or government.',
+    '- item — every named, magical, plot-relevant, or otherwise significant object.',
+    '- event — every meaningful development, deal, betrayal, death, promise, deadline, or unresolved thread.'
+  ];
+  const WIKI_BLOCK_SPEC = [
+    '```gm-wiki',
+    '{"type": "pc|npc|location|faction|item|event", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<2-5 sentences of durable facts>"}',
+    '```'
+  ];
+
   function protocolPrompt(opts) {
     return [
       'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.',
@@ -22,17 +38,10 @@ const Context = (function () {
       '',
       'You interact with the game app through fenced blocks embedded in your replies. The app parses them and renders real UI. Use them exactly as specified — valid JSON, one object per block.',
       '',
-      'WIKI — this is your memory and the ONLY place game state is tracked, so record aggressively. The default is to CREATE an entry, not to skip one. The moment something is introduced or named in play — by you or the player — write it down in the SAME reply, before you move on. When in doubt, record it; a thin entry you flesh out later is far better than a forgotten detail. Emit as many gm-wiki blocks in one reply as there are things to capture (one block each). Record:',
-      '- pc — the player character. Create on the first turn, then update whenever their condition, injuries, inventory, resources, location, or key relationships change.',
-      '- npc — EVERY named or distinctly described person the moment they appear, even a one-line bartender or a guard with a name. Give nameless figures a descriptive handle (e.g. "the scarred dockmaster").',
-      '- location — every distinct place the story visits or that gets named: a town, a tavern, a room, a road, a region.',
-      '- faction — every organization, crew, family, cult, guild, or government referenced.',
-      '- item — every named, magical, plot-relevant, or otherwise significant object.',
-      '- event — every meaningful development, deal, betrayal, death, promise, deadline, or unresolved thread.',
-      'Then keep them current: when a fact changes, update the existing entry (same name) rather than creating a duplicate. Auto-creates an entry; updates if the name already exists:',
-      '```gm-wiki',
-      '{"type": "pc|npc|location|faction|item|event", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<2-5 sentences of durable facts>"}',
-      '```',
+      'WIKI — this is your memory and the ONLY place game state is tracked, so record aggressively. The default is to CREATE an entry, not to skip one. The moment something is introduced or named in play — by you or the player — write it down in the SAME reply, before you move on. When in doubt, record it; a thin entry you flesh out later is far better than a forgotten detail. Emit as many gm-wiki blocks in one reply as there are things to capture (one block each). Record:'
+    ].concat(WIKI_TYPE_GUIDE).concat([
+      'Then keep them current: when a fact changes, update the existing entry (same name) rather than creating a duplicate. Auto-creates an entry; updates if the name already exists:'
+    ]).concat(WIKI_BLOCK_SPEC).concat([
       '',
       'LOOKUP — use ONLY when you genuinely need a specific established fact that is NOT already in your context. The relevant wiki entries and recent turns are already provided above, so most of the time you already have what you need. Do NOT look things up speculatively, do NOT look up something already shown above, and do NOT look up a brand-new detail you can simply invent now and record with gm-wiki. A lookup can cost the player an extra, limited request — so prefer to proceed with what you have, and never emit a lookup in the same reply as a full narration.',
       '```gm-lookup',
@@ -46,7 +55,34 @@ const Context = (function () {
       '```',
       '',
       'Honor established wiki facts and scene summaries as canon. Honor any player-provided rules notes and tone/boundaries below as hard constraints.'
-    ].join('\n');
+    ]).join('\n');
+  }
+
+  /* System prompt for the Wiki tab's "Add world info" box. The player pastes
+   * freeform worldbuilding notes; the model files them into wiki entries with
+   * NO narration and NO plot — output is gm-wiki blocks only. */
+  function wikiIntakePrompt(opts) {
+    opts = opts || {};
+    let lines = [
+      'You are a worldbuilding archivist for a tabletop RPG campaign. The player has pasted notes about their world. This is NOT a scene and does NOT advance any plot — do NOT narrate, do NOT tell a story, do NOT address the player, and do NOT add any commentary.',
+      '',
+      'Your ONLY job is to file the facts in the notes into wiki entries. Output ONLY gm-wiki fenced blocks — one block per distinct entity — and nothing else (no prose before, between, or after the blocks). Be thorough and aggressive: capture every person, place, organization, significant item, and event the notes describe. Keep distinct things in separate entries; never lump several entities into one. Put each fact in the body of the entity it belongs to.',
+      'Entry types to use:'
+    ].concat(WIKI_TYPE_GUIDE).concat([
+      'Use this block format exactly (valid JSON, one object per block):'
+    ]).concat(WIKI_BLOCK_SPEC);
+
+    const world = [];
+    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
+    if (world.length) lines = lines.concat(['', 'World context (for tone and naming):', world.join('\n')]);
+
+    if (opts.existingNames && opts.existingNames.length) {
+      lines = lines.concat(['',
+        'These entries already exist — REUSE the exact same name when the notes refer to them so they update instead of duplicating:',
+        opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
+    }
+    return lines.join('\n');
   }
 
   function matchWiki(entries, recentText) {
@@ -188,5 +224,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, est: est };
 })();

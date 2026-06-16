@@ -492,6 +492,19 @@ main { min-height: calc(100vh - 52px); }
 .sl-ts { color: var(--faint); font-family: var(--mono); font-size: 12px; }
 
 /* ---------- wiki ---------- */
+.wiki-intake {
+  background: var(--bg2);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+}
+.wiki-intake > summary { cursor: pointer; font-family: var(--sans); font-weight: 700; color: var(--ink); }
+.wiki-intake > summary::-webkit-details-marker { color: var(--dim); }
+.wiki-intake .card-sub { margin: 8px 0; }
+.world-intake-input { width: 100%; box-sizing: border-box; resize: vertical; }
+.wiki-intake-actions { display: flex; gap: 12px; align-items: center; margin-top: 10px; }
+.intake-status { margin: 0; }
 .wiki-toolbar { display: flex; gap: 14px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
 .wiki-search { max-width: 320px; }
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
