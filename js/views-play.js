@@ -541,13 +541,15 @@ Views.play = async function (root, cid) {
         }
       });
       const actions = h('div', { class: 'msg-actions' });
-      if (Speech.supported() && narration.trim()) {
+      if (narration.trim()) {
         const readBtn = h('button', { class: 'btn small ghost', title: 'Read this pass aloud' }, '🔊 Read');
+        const resetRead = function () { readBtn.textContent = '🔊 Read'; delete readBtn.dataset.playing; };
         readBtn.addEventListener('click', function () {
-          if (Speech.speaking() && readBtn.dataset.playing) { Speech.stop(); return; }
+          if (readBtn.dataset.playing) { Speech.stop(); return; }
           readBtn.textContent = '⏹ Stop';
           readBtn.dataset.playing = '1';
-          Speech.speak(narration, { onend: function () { readBtn.textContent = '🔊 Read'; delete readBtn.dataset.playing; } });
+          const ok = Speech.speak(narration, { onend: resetRead });
+          if (!ok) { resetRead(); Toast('Text-to-speech isn\'t available in this browser.'); }
         });
         actions.append(readBtn);
       }

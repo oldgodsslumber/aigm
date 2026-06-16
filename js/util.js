@@ -73,7 +73,9 @@ var Speech = (function () {
   }
 
   function supported() {
-    return !!synth && typeof window.SpeechSynthesisUtterance === 'function';
+    /* iOS WebKit doesn't always report the constructor as typeof "function",
+     * so check for existence, not the exact type. */
+    return !!synth && typeof window.SpeechSynthesisUtterance !== 'undefined';
   }
 
   /* break prose into ~200-char, sentence-aligned chunks */
