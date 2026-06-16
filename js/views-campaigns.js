@@ -1,6 +1,38 @@
 /* AI GM — Campaign List view (landing after sign-in). */
 window.Views = window.Views || {};
 
+/* Shared genre picker — preset chips (multi-select) plus a free-text field for
+ * anything not listed. Reused by the create form and the in-play Story setup.
+ * Returns { el, get() } where get() yields the combined genre list. */
+window.GENRES = ['Fantasy', 'Sci-Fi', 'Horror', 'Mystery', 'Modern', 'Historical',
+  'Post-Apocalyptic', 'Cyberpunk', 'Western', 'Superhero', 'Noir', 'Steampunk',
+  'Space Opera', 'Urban Fantasy', 'Comedy', 'Romance'];
+function genrePicker(selected) {
+  const chosen = new Set(selected || []);
+  const presetLower = window.GENRES.map(function (g) { return g.toLowerCase(); });
+  const row = h('div', { class: 'chip-row genre-chips' });
+  window.GENRES.forEach(function (g) {
+    const c = h('button', { class: 'chip' + (chosen.has(g) ? ' on' : ''), type: 'button' }, g);
+    c.addEventListener('click', function () {
+      if (chosen.has(g)) { chosen.delete(g); c.classList.remove('on'); }
+      else { chosen.add(g); c.classList.add('on'); }
+    });
+    row.append(c);
+  });
+  const extras = (selected || []).filter(function (g) { return presetLower.indexOf(String(g).toLowerCase()) < 0; });
+  const customInp = h('input', { type: 'text', placeholder: 'Other genres, comma-separated', value: extras.join(', ') });
+  function get() {
+    const out = [];
+    window.GENRES.forEach(function (g) { if (chosen.has(g)) out.push(g); });
+    customInp.value.split(',').forEach(function (s) {
+      const t = s.trim(); if (t && out.indexOf(t) < 0) out.push(t);
+    });
+    return out;
+  }
+  return { el: h('div', { class: 'genre-picker' }, row, customInp), get: get };
+}
+window.genrePicker = genrePicker;
+
 Views.campaigns = async function (root) {
   root.dataset.screenLabel = 'Campaign List';
   const campaigns = await Store.listCampaigns();
@@ -63,6 +95,10 @@ Views.campaigns = async function (root) {
     const nameInp = h('input', { type: 'text', placeholder: 'e.g. The Hollow Ford Debt' });
     const charInp = h('input', { type: 'text', placeholder: 'Character name' });
 
+    /* world & genre — sets the kind of story and where it happens */
+    const genre = genrePicker([]);
+    const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place — e.g. "rain-soaked neon megacity, 2099" or "a frostbitten Norse coast".' });
+
     const charDescTa = h('textarea', { rows: '3', placeholder: 'Who are you? Name aside — background, look, personality, what you\'re good at, what you want. Plain text; the GM reads this.' });
 
     /* story setup */
@@ -105,6 +141,7 @@ Views.campaigns = async function (root) {
       const uid = Store.uid();
       const cid = await Store.saveCampaign({
         name: name, ownerUid: uid, members: [uid],
+        genres: genre.get(), setting: settingTa.value.trim(),
         premise: premiseTa.value.trim(), boundaries: boundsTa.value.trim(),
         rulesNotes: rulesTa.value.trim(),
         settings: {}, currentSceneId: null, createdAt: Date.now()
@@ -138,6 +175,11 @@ Views.campaigns = async function (root) {
     Modal.open(h('div', { class: 'create-campaign' },
       h('h2', null, 'New campaign'),
       h('label', { class: 'form-row' }, h('span', null, 'Campaign name'), nameInp),
+      h('div', { class: 'create-section' },
+        h('h3', null, 'World & genre'),
+        h('p', { class: 'card-sub' }, 'What kind of story is this, and where does it take place? The GM grounds every scene in this.'),
+        h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
+        h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa)),
       h('label', { class: 'form-row' }, h('span', null, 'Character name'), charInp),
       h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charDescTa),
       h('div', { class: 'create-section' },

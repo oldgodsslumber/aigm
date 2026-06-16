@@ -22,7 +22,14 @@ const Context = (function () {
       '',
       'You interact with the game app through fenced blocks embedded in your replies. The app parses them and renders real UI. Use them exactly as specified — valid JSON, one object per block.',
       '',
-      'WIKI — this is your memory and the only place state is tracked, so keep it current. When a notable NPC, location, faction, item, or event is established in play, record it. Also maintain the player character: when their condition, injuries, inventory, resources, or key relationships change, record or update it (use a "pc" entry for the player character). Auto-creates an entry; updates if the name already exists:',
+      'WIKI — this is your memory and the ONLY place game state is tracked, so record aggressively. The default is to CREATE an entry, not to skip one. The moment something is introduced or named in play — by you or the player — write it down in the SAME reply, before you move on. When in doubt, record it; a thin entry you flesh out later is far better than a forgotten detail. Emit as many gm-wiki blocks in one reply as there are things to capture (one block each). Record:',
+      '- pc — the player character. Create on the first turn, then update whenever their condition, injuries, inventory, resources, location, or key relationships change.',
+      '- npc — EVERY named or distinctly described person the moment they appear, even a one-line bartender or a guard with a name. Give nameless figures a descriptive handle (e.g. "the scarred dockmaster").',
+      '- location — every distinct place the story visits or that gets named: a town, a tavern, a room, a road, a region.',
+      '- faction — every organization, crew, family, cult, guild, or government referenced.',
+      '- item — every named, magical, plot-relevant, or otherwise significant object.',
+      '- event — every meaningful development, deal, betrayal, death, promise, deadline, or unresolved thread.',
+      'Then keep them current: when a fact changes, update the existing entry (same name) rather than creating a duplicate. Auto-creates an entry; updates if the name already exists:',
       '```gm-wiki',
       '{"type": "pc|npc|location|faction|item|event", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<2-5 sentences of durable facts>"}',
       '```',
@@ -86,6 +93,17 @@ const Context = (function () {
       const bio = 'WHO THIS CHARACTER IS (the player\'s own words):\n' + bioText;
       parts.push(bio);
       used += est(bio);
+    }
+
+    /* world — genre(s) + setting. Always included (high priority); grounds
+     * tone and place for every scene. */
+    const worldLines = [];
+    if (opts.genres && opts.genres.length) worldLines.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) worldLines.push('SETTING: ' + String(opts.setting).trim());
+    if (worldLines.length) {
+      const world = 'WORLD (the kind of story and where it takes place — ground every scene in this):\n' + worldLines.join('\n');
+      parts.push(world);
+      used += est(world);
     }
 
     /* 2a. story setup — premise + boundaries the player defined for THIS

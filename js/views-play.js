@@ -123,6 +123,8 @@ Views.play = async function (root, cid) {
   }
 
   async function editStorySetup() {
+    const genre = genrePicker(campaign.genres || []);
+    const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place.' }, campaign.setting || '');
     const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
     const premiseTa = h('textarea', { rows: '5', placeholder: 'Where does the story start? What\'s the situation, the hook, the job?' }, campaign.premise || '');
     const boundsTa = h('textarea', { rows: '4', placeholder: 'Tone, content to keep in or out — e.g. "pulpy and fun, fade to black on gore, no harm to children".' }, campaign.boundaries || '');
@@ -176,6 +178,8 @@ Views.play = async function (root, cid) {
 
     const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
     saveBtn.addEventListener('click', async function () {
+      campaign.genres = genre.get();
+      campaign.setting = settingTa.value.trim();
       campaign.premise = premiseTa.value.trim();
       campaign.boundaries = boundsTa.value.trim();
       await Store.saveCampaign(campaign);
@@ -198,7 +202,9 @@ Views.play = async function (root, cid) {
 
     Modal.open(h('div', null,
       h('h2', null, 'Story & cast setup'),
-      h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override the system\'s default tone.'),
+      h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override genre conventions.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
+      h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa),
       pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
       h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
       h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa),
@@ -234,6 +240,7 @@ Views.play = async function (root, cid) {
       const asm = Context.assemble({
         character: pc,
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
+        genres: campaign.genres, setting: campaign.setting,
         premise: campaign.premise, boundaries: campaign.boundaries,
         rulesNotes: campaign.rulesNotes,
         messages: messages, budget: Settings.budgetFor(settings)

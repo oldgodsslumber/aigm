@@ -506,6 +506,7 @@ main { min-height: calc(100vh - 52px); }
 }
 .chip:hover { color: var(--ink); }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.genre-picker .genre-chips { margin-bottom: 8px; }
 .wiki-card {
   text-align: left;
   background: var(--bg2);
