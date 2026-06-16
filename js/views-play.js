@@ -126,6 +126,7 @@ Views.play = async function (root, cid) {
   }
 
   async function editStorySetup() {
+    const format = formatPicker(campaign.format || 'campaign');
     const genre = genrePicker(campaign.genres || []);
     const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place.' }, campaign.setting || '');
     const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
@@ -181,6 +182,7 @@ Views.play = async function (root, cid) {
 
     const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
     saveBtn.addEventListener('click', async function () {
+      campaign.format = format.get();
       campaign.genres = genre.get();
       campaign.setting = settingTa.value.trim();
       campaign.premise = premiseTa.value.trim();
@@ -206,6 +208,7 @@ Views.play = async function (root, cid) {
     Modal.open(h('div', null,
       h('h2', null, 'Story & cast setup'),
       h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override genre conventions.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Play format'), format.el),
       h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
       h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa),
       pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
@@ -243,7 +246,7 @@ Views.play = async function (root, cid) {
       const asm = Context.assemble({
         character: pc,
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
-        genres: campaign.genres, setting: campaign.setting,
+        genres: campaign.genres, setting: campaign.setting, format: campaign.format,
         premise: campaign.premise, boundaries: campaign.boundaries,
         rulesNotes: campaign.rulesNotes,
         messages: messages, budget: Settings.budgetFor(settings)
@@ -361,7 +364,10 @@ Views.play = async function (root, cid) {
       scene = scenes.find(function (s) { return s.id === sid; });
       Modal.close();
       renderHeader(); renderLog();
-      Toast('Scene closed. Its summary now feeds the GM\'s memory.');
+      const fmtHint = campaign.format === 'multishot'
+        ? ' Consider “Update plan” in the Wiki to recalc the villain\'s scheme.'
+        : (campaign.format === 'oneshot' ? ' You can generate a fresh AI Plan in the Wiki for the next one.' : '');
+      Toast('Scene closed. Its summary now feeds the GM\'s memory.' + fmtHint);
     });
     Modal.open(h('div', { class: 'modal-wide' },
       h('h2', null, 'End of scene'),

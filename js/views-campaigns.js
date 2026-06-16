@@ -33,6 +33,32 @@ function genrePicker(selected) {
 }
 window.genrePicker = genrePicker;
 
+/* Play format — shapes the villain countdown's scale & pacing. Single-select
+ * card picker, reused by the create form and the in-play Story setup. */
+window.FORMATS = [
+  { id: 'oneshot', label: 'One-shot', tag: 'Action movie', desc: 'A single session. The villain’s scheme is tight and fast; generate a fresh one whenever you like.' },
+  { id: 'multishot', label: 'Multi-shot', tag: 'TV series', desc: 'A multi-session arc. The villain’s plan has several components; recalculate it between sessions as things change.' },
+  { id: 'campaign', label: 'Campaign', tag: 'Fantasy epic', desc: 'Open-ended and freeform. The countdown is a looming background threat, leaving room for side quests.' }
+];
+function formatPicker(selected) {
+  let chosen = selected || 'campaign';
+  const row = h('div', { class: 'format-cards' });
+  window.FORMATS.forEach(function (f) {
+    const card = h('button', { class: 'format-card' + (f.id === chosen ? ' on' : ''), type: 'button' },
+      h('span', { class: 'format-tag' }, f.tag),
+      h('strong', null, f.label),
+      h('span', { class: 'format-desc' }, f.desc));
+    card.addEventListener('click', function () {
+      chosen = f.id;
+      row.querySelectorAll('.format-card').forEach(function (x) { x.classList.remove('on'); });
+      card.classList.add('on');
+    });
+    row.append(card);
+  });
+  return { el: row, get: function () { return chosen; } };
+}
+window.formatPicker = formatPicker;
+
 Views.campaigns = async function (root) {
   root.dataset.screenLabel = 'Campaign List';
   const campaigns = await Store.listCampaigns();
@@ -95,6 +121,9 @@ Views.campaigns = async function (root) {
     const nameInp = h('input', { type: 'text', placeholder: 'e.g. The Hollow Ford Debt' });
     const charInp = h('input', { type: 'text', placeholder: 'Character name' });
 
+    /* play format — one-shot / multi-shot / campaign (shapes the threat plan) */
+    const format = formatPicker('campaign');
+
     /* world & genre — sets the kind of story and where it happens */
     const genre = genrePicker([]);
     const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place — e.g. "rain-soaked neon megacity, 2099" or "a frostbitten Norse coast".' });
@@ -141,6 +170,7 @@ Views.campaigns = async function (root) {
       const uid = Store.uid();
       const cid = await Store.saveCampaign({
         name: name, ownerUid: uid, members: [uid],
+        format: format.get(),
         genres: genre.get(), setting: settingTa.value.trim(),
         premise: premiseTa.value.trim(), boundaries: boundsTa.value.trim(),
         rulesNotes: rulesTa.value.trim(),
@@ -175,6 +205,10 @@ Views.campaigns = async function (root) {
     Modal.open(h('div', { class: 'create-campaign' },
       h('h2', null, 'New campaign'),
       h('label', { class: 'form-row' }, h('span', null, 'Campaign name'), nameInp),
+      h('div', { class: 'create-section' },
+        h('h3', null, 'Play format'),
+        h('p', { class: 'card-sub' }, 'How big is the story? This shapes the villain’s countdown — how urgent and far-reaching their plan is.'),
+        format.el),
       h('div', { class: 'create-section' },
         h('h3', null, 'World & genre'),
         h('p', { class: 'card-sub' }, 'What kind of story is this, and where does it take place? The GM grounds every scene in this.'),

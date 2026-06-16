@@ -258,7 +258,7 @@ Views.wiki = async function (root, cid) {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const recap = await buildRecap();
       const system = Context.planPrompt({
-        genres: campaign.genres, setting: campaign.setting, threat: threatText,
+        genres: campaign.genres, setting: campaign.setting, format: campaign.format, threat: threatText,
         isUpdate: isUpdate, existingNames: existingNames,
         existingPlan: isUpdate ? currentPlanBody() : '', recap: recap
       });

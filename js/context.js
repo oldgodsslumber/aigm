@@ -30,6 +30,19 @@ const Context = (function () {
     '```'
   ];
 
+  /* Campaign format shapes the threat countdown's scale (used when designing a
+   * plan) and the pacing the GM uses while advancing it during play. */
+  const FORMAT_GUIDE = {
+    oneshot: 'FORMAT — ONE-SHOT (a single session, like an action movie). Make the countdown TIGHT, FAST, and SELF-CONTAINED: all six steps escalate within one sitting and Nightfall is reachable by the end of a single session. Keep the cast and scope small and focused — one threat, one goal, no sprawling subplots.',
+    multishot: 'FORMAT — MULTI-SHOT (a multi-session arc, like a TV season). Make the countdown span SEVERAL sessions: each of the six steps is a sizable component or phase that could anchor its own session/episode, building toward a season-finale Nightfall. Give the threat multiple moving parts (lieutenants, fronts, resources) so the plan can be revised between sessions as the players interfere.',
+    campaign: 'FORMAT — CAMPAIGN (open-ended, like a long fantasy game). Make the countdown a SLOW-BURNING, looming background threat: the six steps advance gradually and are not too imposing, so there is plenty of room for side quests and freeform play between escalations. The threat is a distant storm cloud, not an immediate clock.'
+  };
+  const FORMAT_PACING = {
+    oneshot: 'PACING — this is a ONE-SHOT (a single session): drive the threat\'s countdown briskly toward its conclusion within this session.',
+    multishot: 'PACING — this is a MULTI-SESSION arc: advance the countdown a meaningful step or so per session, building toward a finale.',
+    campaign: 'PACING — this is an OPEN CAMPAIGN: let the countdown loom in the background and advance slowly, leaving plenty of room for side quests and freeform play.'
+  };
+
   function protocolPrompt(opts) {
     return [
       'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.',
@@ -135,6 +148,8 @@ const Context = (function () {
         ? 'The player has specified the threat / goal — build around it: ' + String(opts.threat).trim()
         : 'Choose the most compelling antagonist or looming danger that fits the world and what has happened so far.'),
       '',
+      (FORMAT_GUIDE[opts.format] || FORMAT_GUIDE.campaign),
+      '',
       'Produce, as hidden wiki entries:',
       '1. ONE entry of type "plan" — the COUNTDOWN. Its body states the threat, what it ultimately wants (its doom/goal), and EXACTLY SIX escalating steps it takes if the players never interfere, labelled in order: Day, Shadows, Dawn, Dusk, Sunset, Nightfall. Each step is one concrete development; the later steps are worse; Nightfall is the threat fully achieving its goal. The players do not act in this plan — it is what unfolds unopposed.',
       '2. Several SUPPORTING entries — the threat itself and its key pieces (true nature, secret motive, hidden allies, secret locations or items). Use the appropriate types (npc, faction, location, item, event). Keep distinct things in separate entries.',
@@ -224,6 +239,12 @@ const Context = (function () {
       const world = 'WORLD (the kind of story and where it takes place — ground every scene in this):\n' + worldLines.join('\n');
       parts.push(world);
       used += est(world);
+    }
+
+    /* campaign format — paces how the threat's countdown advances */
+    if (opts.format && FORMAT_PACING[opts.format]) {
+      parts.push(FORMAT_PACING[opts.format]);
+      used += est(FORMAT_PACING[opts.format]);
     }
 
     /* 2a. story setup — premise + boundaries the player defined for THIS
