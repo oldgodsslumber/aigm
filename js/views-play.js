@@ -8,6 +8,7 @@ Views.play = async function (root, cid) {
   let campaign, pc, scenes, scene, messages;
   let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0, lastGmId = null;
   let lastReadId = null, firstRender = true; /* drive-mode auto-read: only speak NEW replies, not history */
+  let pendingPlayer = null; /* { id, text } of a player move awaiting its first GM reply, so we can roll it back on error */
 
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
@@ -71,7 +72,16 @@ Views.play = async function (root, cid) {
     const reset = function () { talkBtn.classList.remove('listening'); talkBtn.textContent = '🎤 Talk'; };
     const ok = Listen.start({
       onText: function (text) { input.value = base + text; },
-      onEnd: function (reason) { reset(); if (reason !== 'no-speech' && reason !== 'aborted') input.focus(); }
+      onEnd: function (reason) {
+        reset();
+        if (reason === 'not-allowed' || reason === 'service-not-allowed') {
+          Toast('Microphone access is blocked — allow it for this site to use 🎤 Talk.');
+        } else if (reason === 'audio-capture') {
+          Toast('No microphone found on this device.');
+        } else {
+          input.focus();
+        }
+      }
     });
     if (!ok) { reset(); input.focus(); }
   });
@@ -219,10 +229,25 @@ Views.play = async function (root, cid) {
     const text = input.value.trim();
     if (!text || busy) return;
     input.value = '';
-    await Store.addMessage(cid, { role: 'player', content: text, sceneId: scene.id });
+    const id = await Store.addMessage(cid, { role: 'player', content: text, sceneId: scene.id });
+    pendingPlayer = { id: id, text: text };
     messages = await Store.listMessages(cid);
     renderLog();
     runTurn(0);
+  }
+
+  /* A player move failed to get any GM reply (API error, no key). Roll the move
+   * out of the transcript, drop it back into the box, and tell the player — so
+   * it's unambiguous that nothing was sent and they can just send again. */
+  async function restorePlayerTurn(bannerMsg) {
+    const p = pendingPlayer; pendingPlayer = null;
+    if (!p) { showBanner(bannerMsg, false); return; }
+    try { await Store.truncateFrom(cid, p.id); } catch (e) { /* ignore */ }
+    messages = await Store.listMessages(cid);
+    if (!input.value.trim()) input.value = p.text;
+    renderLog();
+    showBanner(bannerMsg, false);
+    if (!input.disabled) input.focus();
   }
 
   async function editStorySetup() {
@@ -372,7 +397,11 @@ Views.play = async function (root, cid) {
 
   async function runTurn(depth) {
     if (depth === 0) turnRequests = 0; /* depth 0 = a fresh player-initiated turn; deeper = chained follow-ups */
-    if (keyMissing()) { showBanner('No Gemini API key set — add yours in Settings to play.', false); return; }
+    if (keyMissing()) {
+      const msg = 'No Gemini API key set — add yours in Settings to play.';
+      if (depth === 0 && pendingPlayer) await restorePlayerTurn(msg); else showBanner(msg, false);
+      return;
+    }
     hideBanner();
     setBusy(true);
     try {
@@ -408,15 +437,25 @@ Views.play = async function (root, cid) {
       };
       if (isGemma && replyText !== res.text) msg.raw = res.text;
       await Store.addMessage(cid, msg);
+      pendingPlayer = null; /* a GM reply now exists — the player's move was consumed */
       messages = await Store.listMessages(cid);
       await processBlocks(messages[messages.length - 1], depth);
       messages = await Store.listMessages(cid);
     } catch (e) {
       console.error(e);
       lastError = e.message;
-      showBanner(e.message, true);
+      /* A fresh player move that never produced a reply: put it back in the box
+       * so it's clear it must be re-sent. Otherwise (begin/regenerate/follow-up,
+       * or a turn that already has narration) keep the Retry banner. */
+      if (depth === 0 && pendingPlayer) {
+        await restorePlayerTurn('The GM couldn’t answer:\n' + e.message +
+          '\n\nYour move was put back in the box — send it again when you’re ready.');
+      } else {
+        showBanner(e.message, true);
+      }
+    } finally {
+      setBusy(false); /* always clear the "GM considers…" state, even if the catch path itself errors */
     }
-    setBusy(false);
   }
 
   async function processBlocks(msg, depth) {

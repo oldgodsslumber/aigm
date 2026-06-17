@@ -180,8 +180,15 @@ var Speech = (function () {
 /* Speech-to-text via the Web Speech API's SpeechRecognition. Works in Chrome
  * (desktop + Android); iOS Safari does NOT implement it, so supported() returns
  * false there and callers fall back to the native keyboard dictation mic.
- * Single-shot by design: start a session, the caller gets interim text live and
- * a final transcript on end. Must be started from a user gesture. */
+ *
+ * Continuous dictation: the recognizer keeps listening until the caller stops
+ * it. Chrome auto-ends a session after a few seconds of silence (and fires a
+ * 'no-speech' error), which would cut you off mid-thought — bad for an RPG
+ * where you pause 20–30s to decide your move. So we transparently restart the
+ * recognizer whenever it ends on its own, accumulating the transcript across
+ * restarts. Only an explicit stop() or a fatal mic error (permission denied /
+ * no microphone) actually ends the session. Must be started from a user
+ * gesture. */
 var Listen = (function () {
   var Rec = (typeof window !== 'undefined') &&
     (window.SpeechRecognition || window.webkitSpeechRecognition) || null;
@@ -195,40 +202,54 @@ var Listen = (function () {
     if (!Rec) return false;
     stop();
     opts = opts || {};
-    var rec = new Rec();
-    rec.lang = opts.lang || 'en-US';
-    rec.interimResults = true;
-    rec.continuous = false;          // one utterance, then hand back the text
-    rec.maxAlternatives = 1;
-    var s = { rec: rec, stopped: false };
+    var s = { stopped: false, fatal: null, finalText: '', rec: null };
     session = s;
-    var finalText = '';
-    rec.onresult = function (ev) {
-      var interim = '';
-      for (var i = ev.resultIndex; i < ev.results.length; i++) {
-        var r = ev.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else interim += r[0].transcript;
-      }
-      if (opts.onText) opts.onText((finalText + interim).trim(), false);
-    };
-    rec.onerror = function (ev) {
-      if (session === s) session = null;
-      if (opts.onEnd) opts.onEnd(ev.error || 'error');
-    };
-    rec.onend = function () {
-      if (session === s) session = null;
-      if (opts.onText && finalText.trim()) opts.onText(finalText.trim(), true);
-      if (opts.onEnd) opts.onEnd(s.stopped ? 'stopped' : 'ended');
-    };
-    try { rec.start(); } catch (e) { session = null; return false; }
+
+    function build() {
+      var rec = new Rec();
+      rec.lang = opts.lang || 'en-US';
+      rec.interimResults = true;
+      rec.continuous = true;
+      rec.maxAlternatives = 1;
+      rec.onresult = function (ev) {
+        var interim = '';
+        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+          var r = ev.results[i];
+          if (r.isFinal) s.finalText += r[0].transcript;
+          else interim += r[0].transcript;
+        }
+        if (opts.onText) opts.onText((s.finalText + interim).trim(), false);
+      };
+      rec.onerror = function (ev) {
+        var err = ev.error || 'error';
+        /* fatal errors really end the session; 'no-speech'/'aborted' are the
+         * normal silence-timeout signals — let onend restart instead. */
+        if (err === 'not-allowed' || err === 'service-not-allowed' || err === 'audio-capture') s.fatal = err;
+      };
+      rec.onend = function () {
+        if (session !== s) return;                 // superseded by a newer start/stop
+        if (s.stopped || s.fatal) {
+          session = null;
+          if (opts.onText && s.finalText.trim()) opts.onText(s.finalText.trim(), true);
+          if (opts.onEnd) opts.onEnd(s.fatal || 'stopped');
+          return;
+        }
+        /* ended on its own (silence) — keep listening */
+        try { build(); } catch (e) { session = null; if (opts.onEnd) opts.onEnd('error'); }
+      };
+      s.rec = rec;
+      rec.start();
+    }
+
+    try { build(); } catch (e) { session = null; return false; }
     return true;
   }
 
   function listening() { return !!session; }
 
+  /* explicit stop — keeps any final transcript, fires onEnd('stopped') */
   function stop() {
-    if (session) { session.stopped = true; try { session.rec.stop(); } catch (e) {} session = null; }
+    if (session) { session.stopped = true; try { session.rec.stop(); } catch (e) {} }
   }
 
   return { supported: supported, start: start, stop: stop, listening: listening };
