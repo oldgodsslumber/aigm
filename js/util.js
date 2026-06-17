@@ -177,6 +177,71 @@ var Speech = (function () {
   };
 })();
 
+/* Speech-to-text via the Web Speech API's SpeechRecognition. Works in Chrome
+ * (desktop + Android); iOS Safari does NOT implement it, so supported() returns
+ * false there and callers fall back to the native keyboard dictation mic.
+ * Single-shot by design: start a session, the caller gets interim text live and
+ * a final transcript on end. Must be started from a user gesture. */
+var Listen = (function () {
+  var Rec = (typeof window !== 'undefined') &&
+    (window.SpeechRecognition || window.webkitSpeechRecognition) || null;
+  var session = null;
+
+  function supported() { return !!Rec; }
+
+  /* opts: { onText(text, isFinal), onEnd(reason), lang }. Returns true if a
+   * recognition session started, false if unsupported. */
+  function start(opts) {
+    if (!Rec) return false;
+    stop();
+    opts = opts || {};
+    var rec = new Rec();
+    rec.lang = opts.lang || 'en-US';
+    rec.interimResults = true;
+    rec.continuous = false;          // one utterance, then hand back the text
+    rec.maxAlternatives = 1;
+    var s = { rec: rec, stopped: false };
+    session = s;
+    var finalText = '';
+    rec.onresult = function (ev) {
+      var interim = '';
+      for (var i = ev.resultIndex; i < ev.results.length; i++) {
+        var r = ev.results[i];
+        if (r.isFinal) finalText += r[0].transcript;
+        else interim += r[0].transcript;
+      }
+      if (opts.onText) opts.onText((finalText + interim).trim(), false);
+    };
+    rec.onerror = function (ev) {
+      if (session === s) session = null;
+      if (opts.onEnd) opts.onEnd(ev.error || 'error');
+    };
+    rec.onend = function () {
+      if (session === s) session = null;
+      if (opts.onText && finalText.trim()) opts.onText(finalText.trim(), true);
+      if (opts.onEnd) opts.onEnd(s.stopped ? 'stopped' : 'ended');
+    };
+    try { rec.start(); } catch (e) { session = null; return false; }
+    return true;
+  }
+
+  function listening() { return !!session; }
+
+  function stop() {
+    if (session) { session.stopped = true; try { session.rec.stop(); } catch (e) {} session = null; }
+  }
+
+  return { supported: supported, start: start, stop: stop, listening: listening };
+})();
+
+/* Drive Mode — a device-local preference (like the TTS voice), kept in
+ * localStorage so it survives reloads but never syncs per-campaign. */
+var DriveMode = (function () {
+  function enabled() { try { return localStorage.getItem('aigm.driveMode') === '1'; } catch (e) { return false; } }
+  function set(on) { try { if (on) localStorage.setItem('aigm.driveMode', '1'); else localStorage.removeItem('aigm.driveMode'); } catch (e) {} }
+  return { enabled: enabled, set: set };
+})();
+
 function debounce(fn, ms) {
   let t = null;
   return function () {

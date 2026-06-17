@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260616p';
+const BUILD = '20260617a';
 
 const Modal = (function () {
   let root = null;
@@ -59,6 +59,8 @@ const Router = (function () {
       if (route.view === 'play' && route.id) await Views.play(root, route.id);
       else if (route.view === 'wiki' && route.id) await Views.wiki(root, route.id);
       else if (route.view === 'journal' && route.id) await Views.journal(root, route.id);
+      else if (route.view === 'characters') await Views.characters(root);
+      else if (route.view === 'new') await Views.campaigns(root, route.id); /* start a new story, optionally with a preset character */
       else if (route.view === 'settings') await Views.settings(root);
       else await Views.campaigns(root);
     } catch (e) {

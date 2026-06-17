@@ -156,6 +156,20 @@ main { min-height: calc(100vh - 52px); }
   border-radius: 99px; padding: 1px 8px; margin-bottom: 8px; opacity: 0.85;
 }
 .campaign-card h2 { font-size: 20px; margin-bottom: 6px; }
+/* character library cards */
+.char-card { display: flex; flex-direction: column; }
+.char-stories { margin: 12px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.char-story-link {
+  display: flex; justify-content: space-between; align-items: center; gap: 8px;
+  padding: 6px 10px; border: 1px solid var(--line-soft); border-radius: 7px;
+  color: var(--ink); font-size: 13px;
+}
+.char-story-link:hover { border-color: var(--accent); text-decoration: none; }
+.char-story-link .fmt-tag {
+  font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--faint); white-space: nowrap;
+}
+.char-card-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: auto; padding-top: 12px; }
 .card-sub { color: var(--dim); font-size: 14px; margin: 2px 0; }
 .card-meta { color: var(--faint); font-size: 13px; font-family: var(--mono); margin: 8px 0 0; }
 .card-del {
@@ -351,6 +365,39 @@ main { min-height: calc(100vh - 52px); }
 .play[data-layout="focus"] .composer { padding-left: max(8vw, calc(50vw - 380px)); padding-right: max(8vw, calc(50vw - 380px)); }
 .composer-input { flex: 1; background: var(--bg0); min-height: 44px; max-height: 160px; }
 .composer-send { height: 44px; }
+
+/* ---------- drive mode: hands-free, glanceable Play layout ---------- */
+.toggle-row { align-items: center; }
+.toggle-row input[type="checkbox"] { width: 20px; height: 20px; }
+
+/* transcript shrinks & dims — you're not meant to read it while driving */
+.drive-mode .chat-log { font-size: 0.82rem; opacity: 0.55; gap: 12px; padding-top: 16px; padding-bottom: 12px; }
+.drive-mode .msg-actions { display: none; }              /* hide tiny per-message buttons */
+/* the box you talk into grows */
+.drive-mode .composer-input { min-height: 84px; max-height: 220px; font-size: 1.05rem; }
+
+/* two big buttons pinned under the composer */
+.drive-bar {
+  display: flex;
+  gap: 12px;
+  padding: 0 8vw 16px;
+  background: var(--bg1);
+}
+.play[data-layout="focus"] .drive-bar { padding-left: max(8vw, calc(50vw - 380px)); padding-right: max(8vw, calc(50vw - 380px)); }
+.drive-btn {
+  flex: 1;
+  min-height: 88px;
+  font-size: 1.35rem;
+  font-weight: 700;
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.drive-talk.listening { background: var(--danger, #e05b5b); color: #fff; border-color: transparent; animation: drivePulse 1.2s ease-in-out infinite; }
+.drive-read.playing { background: var(--accent, #6a8cff); color: #fff; border-color: transparent; }
+@keyframes drivePulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+@media (prefers-reduced-motion: reduce) { .drive-talk.listening { animation: none; } }
 
 /* inline notices */
 .inline-notice {

@@ -7,6 +7,7 @@ Views.play = async function (root, cid) {
   root.dataset.screenLabel = 'Play View';
   let campaign, pc, scenes, scene, messages;
   let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0, lastGmId = null;
+  let lastReadId = null, firstRender = true; /* drive-mode auto-read: only speak NEW replies, not history */
 
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
@@ -28,10 +29,11 @@ Views.play = async function (root, cid) {
 
   /* ---------- shell ---------- */
   root.innerHTML = '';
-  const play = h('div', { class: 'play', 'data-layout': 'focus' });
+  const drive = DriveMode.enabled();   // hands-free, glanceable layout for the car
+  const play = h('div', { class: 'play' + (drive ? ' drive-mode' : ''), 'data-layout': 'focus' });
   const logEl = h('div', { class: 'chat-log' });
   const banner = h('div', { class: 'play-banner', style: 'display:none' });
-  const input = h('textarea', { class: 'composer-input', rows: '2', placeholder: 'What do you do?' });
+  const input = h('textarea', { class: 'composer-input', rows: drive ? '3' : '2', placeholder: 'What do you do?' });
   const sendBtn = h('button', { class: 'btn accent composer-send' }, 'Send');
   const sceneTitleEl = h('span', { class: 'scene-title' });
   const pinsEl = h('span', { class: 'scene-pins' });
@@ -41,18 +43,66 @@ Views.play = async function (root, cid) {
   endSceneBtn.addEventListener('click', endScene);
   const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise, boundaries, character & cast' }, 'Story & cast');
   setupBtn.addEventListener('click', editStorySetup);
+  const saveCharBtn = h('button', { class: 'btn small ghost', title: 'Snapshot this character\'s current state & story so the next adventure can continue from it' }, 'Save character');
+  saveCharBtn.addEventListener('click', async function () {
+    const lib = await Store.saveCharacterProgress(cid);
+    Toast(lib ? lib.name + '\'s progress saved — new stories can continue from here.'
+              : 'This story has no linked character to save.');
+  });
+
+  /* ---------- drive-mode controls (two big, glanceable buttons) ---------- */
+  const talkBtn = h('button', { type: 'button', class: 'btn drive-btn drive-talk' }, '🎤 Talk');
+  const readDriveBtn = h('button', { type: 'button', class: 'btn drive-btn drive-read' }, '🔊 Read');
+  const driveBar = h('div', { class: 'drive-bar' }, talkBtn, readDriveBtn);
+
+  /* 🎤 Talk: where the browser supports in-page recognition (Chrome/Android),
+   * dictate straight into the box; otherwise focus the field so the device's
+   * keyboard mic (iOS) can do it. Tap again to stop. */
+  talkBtn.addEventListener('click', function () {
+    if (Listen.listening()) { Listen.stop(); return; }
+    if (!Listen.supported()) {
+      input.focus();
+      Toast('Tap the microphone on your keyboard to dictate.');
+      return;
+    }
+    const base = input.value.trim() ? input.value.trim() + ' ' : '';
+    talkBtn.classList.add('listening');
+    talkBtn.textContent = '● Listening… tap to stop';
+    const reset = function () { talkBtn.classList.remove('listening'); talkBtn.textContent = '🎤 Talk'; };
+    const ok = Listen.start({
+      onText: function (text) { input.value = base + text; },
+      onEnd: function (reason) { reset(); if (reason !== 'no-speech' && reason !== 'aborted') input.focus(); }
+    });
+    if (!ok) { reset(); input.focus(); }
+  });
+
+  /* 🔊 Read / auto-read: speak the latest GM narration. Shared so the manual
+   * tap and the automatic read after a new reply keep the button in sync. */
+  function readLatestGm(fromAuto) {
+    if (Speech.speaking()) { Speech.stop(); if (!fromAuto) return; }
+    const gm = messages.slice().reverse().find(function (m) { return m.role === 'gm'; });
+    const txt = narrationOf(gm);
+    if (!txt) { if (!fromAuto) Toast('Nothing to read yet.'); return; }
+    const reset = function () { readDriveBtn.classList.remove('playing'); readDriveBtn.textContent = '🔊 Read'; };
+    readDriveBtn.classList.add('playing');
+    readDriveBtn.textContent = '⏹ Stop';
+    const ok = Speech.speak(txt, { onend: reset });
+    if (!ok) { reset(); if (!fromAuto) Toast('Text-to-speech isn\'t available in this browser.'); }
+  }
+  readDriveBtn.addEventListener('click', function () { readLatestGm(false); });
 
   play.append(
     h('header', { class: 'scene-bar' },
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, reqMeter, setupBtn, endSceneBtn)),
+      h('div', { class: 'scene-bar-actions' }, reqMeter, saveCharBtn, setupBtn, endSceneBtn)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
         h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
-          input, sendBtn))));
+          input, sendBtn),
+        drive ? driveBar : null)));
   root.append(play);
 
   input.addEventListener('keydown', function (e) {
@@ -123,6 +173,15 @@ Views.play = async function (root, cid) {
   function keyMissing() {
     const s = Settings.forCampaign(campaign);
     return s.backend === 'gemini' && !s.geminiKey;
+  }
+
+  /* spoken text of a GM message: narration only, no gm-* blocks or markup */
+  function narrationOf(m) {
+    if (!m || m.role !== 'gm') return '';
+    return Tags.parse(m.content).segments
+      .filter(function (s) { return s.type === 'text'; })
+      .map(function (s) { return (s.text || '').trim(); })
+      .filter(Boolean).join('\n\n');
   }
 
   /* ---------- wiki upserts ---------- */
@@ -324,7 +383,7 @@ Views.play = async function (root, cid) {
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
         genres: campaign.genres, setting: campaign.setting, format: campaign.format,
         premise: campaign.premise, boundaries: campaign.boundaries,
-        rulesNotes: campaign.rulesNotes,
+        rulesNotes: campaign.rulesNotes, recap: campaign.recap,
         messages: messages, budget: Settings.budgetFor(settings)
       });
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });
@@ -611,6 +670,16 @@ Views.play = async function (root, cid) {
     });
     if (busy) logEl.append(h('div', { class: 'msg msg-thinking' }, h('span', { class: 'thinking-dots' }, 'The GM considers'), ''));
     logEl.scrollTop = logEl.scrollHeight;
+
+    /* Drive mode: read each NEW GM reply aloud automatically. The first render
+     * just sets the baseline so we don't replay the whole backlog on open.
+     * (Browsers may block auto-play TTS without a recent gesture — the 🔊 Read
+     * button is the manual fallback.) */
+    if (firstRender) { firstRender = false; lastReadId = lastGmId; }
+    else if (drive && !busy && lastGmId && lastGmId !== lastReadId) {
+      lastReadId = lastGmId;
+      readLatestGm(true);
+    }
   }
 
   renderHeader();

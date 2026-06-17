@@ -151,6 +151,24 @@ Views.settings = async function (root) {
         h('h2', null, 'Read-aloud voice'),
         h('p', { class: 'card-sub' }, 'This browser does not expose text-to-speech, so read-aloud is unavailable here. Try Chrome or Safari.'));
 
+  /* ---- drive mode — device-local, saved on toggle ---- */
+  const driveToggle = h('input', { type: 'checkbox' });
+  driveToggle.checked = DriveMode.enabled();
+  driveToggle.addEventListener('change', function () {
+    DriveMode.set(driveToggle.checked);
+    Toast(driveToggle.checked ? 'Drive mode on — open a story to use it.' : 'Drive mode off.');
+  });
+  const driveSttNote = Listen.supported()
+    ? 'On-screen voice-to-text is available in this browser — tap 🎤 Talk and speak.'
+    : 'This browser has no built-in voice-to-text (e.g. iPhone Safari), so 🎤 Talk opens the keyboard instead — tap the keyboard’s microphone to dictate. Read-aloud still works.';
+  const driveCard = h('section', { class: 'settings-card' },
+    h('h2', null, 'Drive mode'),
+    h('p', { class: 'card-sub' }, 'A hands-free, glanceable Play layout for the car: the transcript shrinks, and two big buttons sit at the bottom — 🎤 Talk dictates your move into the box, 🔊 Read replays the last reply aloud. New GM replies read themselves automatically.'),
+    h('label', { class: 'form-row toggle-row' },
+      h('span', null, 'Enable drive mode'), driveToggle),
+    h('p', { class: 'sf-hint' }, driveSttNote),
+    h('p', { class: 'sf-hint' }, 'Please keep your eyes on the road — set up voice and speed under Read-aloud voice above, and only glance at the screen when stopped.'));
+
   /* backup */
   const exportBtn = h('button', { class: 'btn' }, 'Export data');
   exportBtn.addEventListener('click', function () {
@@ -185,6 +203,7 @@ Views.settings = async function (root) {
       h('p', { class: 'card-sub' }, 'Override the global backend for individual campaigns.'),
       overrides) : null,
     ttsCard,
+    driveCard,
     h('section', { class: 'settings-card' },
       h('h2', null, 'Data'),
       h('p', { class: 'card-sub' }, 'Everything lives in this browser until Firebase is wired up. Export a backup before clearing site data.'),

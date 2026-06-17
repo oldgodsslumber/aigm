@@ -266,6 +266,15 @@ const Context = (function () {
       used += est(bio);
     }
 
+    /* carried-over recap — when this character continues from a previous story,
+     * a digest of what already happened to them. High priority (right after
+     * the bio) so the GM picks up the thread. */
+    if (opts.recap && String(opts.recap).trim()) {
+      const recap = 'THIS CHARACTER\'S STORY SO FAR (carried over from earlier adventures — honor it as established history):\n' + String(opts.recap).trim();
+      parts.push(recap);
+      used += est(recap);
+    }
+
     /* world — genre(s) + setting. Always included (high priority); grounds
      * tone and place for every scene. */
     const worldLines = [];

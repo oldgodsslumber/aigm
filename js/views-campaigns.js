@@ -59,7 +59,7 @@ function formatPicker(selected) {
 }
 window.formatPicker = formatPicker;
 
-Views.campaigns = async function (root) {
+Views.campaigns = async function (root, openCreateCharId) {
   root.dataset.screenLabel = 'Campaign List';
   const campaigns = await Store.listCampaigns();
 
@@ -159,9 +159,12 @@ Views.campaigns = async function (root) {
     ));
   }
 
-  function openCreate() {
+  async function openCreate(presetCharId) {
+    /* openCreate doubles as an onclick handler (gets an Event), so only honor a
+     * real character id passed from the roster's "New story with…" action. */
+    if (presetCharId && typeof presetCharId !== 'string') presetCharId = null;
+    const libChars = await Store.listLibChars();
     const nameInp = h('input', { type: 'text', placeholder: 'e.g. The Hollow Ford Debt' });
-    const charInp = h('input', { type: 'text', placeholder: 'Character name' });
 
     /* play format — one-shot / multi-shot / campaign (shapes the threat plan) */
     const format = formatPicker('campaign');
@@ -170,7 +173,53 @@ Views.campaigns = async function (root) {
     const genre = genrePicker([]);
     const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place — e.g. "rain-soaked neon megacity, 2099" or "a frostbitten Norse coast".' });
 
+    /* ---- character: continue one from the library, or make a new one ---- */
+    const charInp = h('input', { type: 'text', placeholder: 'Character name' });
     const charDescTa = h('textarea', { rows: '3', placeholder: 'Who are you? Name aside — background, look, personality, what you\'re good at, what you want. Plain text; the GM reads this.' });
+
+    let charMode = libChars.length ? 'existing' : 'new';
+    let selectedCharId = presetCharId || (libChars[0] && libChars[0].id) || null;
+    if (presetCharId) charMode = 'existing';
+
+    const existingSel = h('select', null, libChars.map(function (c) {
+      return h('option', { value: c.id }, c.name + (c.lastPlayedCampaignId ? ' · continuing' : ' · new'));
+    }));
+    if (selectedCharId) existingSel.value = selectedCharId;
+    const existingNote = h('p', { class: 'card-sub' });
+    function refreshNote() {
+      const c = libChars.find(function (x) { return x.id === existingSel.value; });
+      existingNote.textContent = c && c.storySoFar
+        ? 'This story continues from where ' + c.name + ' left off — their bio, current condition, and what\'s happened so far carry over.'
+        : (c ? c.name + ' starts this story fresh (no prior adventures recorded yet).' : '');
+    }
+    existingSel.addEventListener('change', function () { selectedCharId = existingSel.value; refreshNote(); });
+    refreshNote();
+
+    const newCharBox = h('div', null,
+      h('label', { class: 'form-row' }, h('span', null, 'Character name'), charInp),
+      h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charDescTa));
+    const existingBox = h('div', null,
+      h('label', { class: 'form-row' }, h('span', null, 'Character'), existingSel),
+      existingNote);
+
+    const modeNew = h('button', { class: 'chip' + (charMode === 'new' ? ' on' : ''), type: 'button' }, 'New character');
+    const modeExisting = h('button', { class: 'chip' + (charMode === 'existing' ? ' on' : ''), type: 'button' }, 'Continue a character');
+    function syncMode() {
+      modeNew.classList.toggle('on', charMode === 'new');
+      modeExisting.classList.toggle('on', charMode === 'existing');
+      newCharBox.style.display = charMode === 'new' ? '' : 'none';
+      existingBox.style.display = charMode === 'existing' ? '' : 'none';
+    }
+    modeNew.addEventListener('click', function () { charMode = 'new'; syncMode(); });
+    modeExisting.addEventListener('click', function () { charMode = 'existing'; syncMode(); });
+    const charSection = h('div', { class: 'create-section' },
+      h('h3', null, 'Character'),
+      libChars.length
+        ? h('p', { class: 'card-sub' }, 'Start a new character, or carry one of your existing characters into this story.')
+        : h('p', { class: 'card-sub' }, 'Create a character for this story. You can carry them into future stories later.'),
+      libChars.length ? h('div', { class: 'chip-row' }, modeNew, modeExisting) : null,
+      existingBox, newCharBox);
+    syncMode();
 
     /* story setup */
     const premiseTa = h('textarea', { rows: '4', placeholder: 'Where does the story start? The situation, the hook, the job. Leave blank to let the GM open cold.' });
@@ -207,24 +256,51 @@ Views.campaigns = async function (root) {
     const create = h('button', { class: 'btn accent' }, 'Create campaign');
     create.addEventListener('click', async function () {
       const name = nameInp.value.trim();
-      const charName = charInp.value.trim();
-      if (!name || !charName) { Toast('A campaign name and a character name are both required.'); return; }
       const uid = Store.uid();
+
+      /* resolve the character first — either an existing library character we
+       * continue, or a brand-new one we also add to the library. */
+      let libChar;
+      if (charMode === 'existing') {
+        libChar = await Store.getLibChar(selectedCharId);
+        if (!name || !libChar) { Toast('Pick a character and give the story a name.'); return; }
+      } else {
+        const charName = charInp.value.trim();
+        if (!name || !charName) { Toast('A campaign name and a character name are both required.'); return; }
+        const libId = await Store.saveLibChar({
+          name: charName, description: charDescTa.value.trim(),
+          condition: '', storySoFar: ''
+        });
+        libChar = await Store.getLibChar(libId);
+      }
+
       const cid = await Store.saveCampaign({
         name: name, ownerUid: uid, members: [uid],
         format: format.get(),
         genres: genre.get(), setting: settingTa.value.trim(),
         premise: premiseTa.value.trim(), boundaries: boundsTa.value.trim(),
         rulesNotes: rulesTa.value.trim(),
+        characterId: libChar.id, recap: libChar.storySoFar || '',
         settings: {}, currentSceneId: null, createdAt: Date.now()
       });
+      /* per-story copy of the PC, seeded from the library character and linked
+       * back to it so progress can be saved later */
       await Store.saveCharacter(cid, {
-        name: charName, isNPC: false,
-        description: charDescTa.value.trim(), createdAt: Date.now()
+        name: libChar.name, isNPC: false, libCharId: libChar.id,
+        description: libChar.description || '', createdAt: Date.now()
       });
       /* pre-seeded cast → wiki entries, pinned to scene 1 so the GM has them
        * from the very first reply */
       const pinnedEntryIds = [];
+      /* carry the character's last-known condition in as a pinned pc entry so a
+       * continued story opens with their injuries, gear, and standing intact */
+      if (charMode === 'existing' && libChar.condition && libChar.condition.trim()) {
+        const pid = await Store.saveWiki(cid, {
+          type: 'pc', name: libChar.name, aliases: [], tags: [],
+          body: libChar.condition.trim(), createdBy: 'player', mergedInto: null
+        });
+        pinnedEntryIds.push(pid);
+      }
       for (const r of castRows) {
         const cn = r.name.value.trim();
         if (!cn) continue;
@@ -256,8 +332,7 @@ Views.campaigns = async function (root) {
         h('p', { class: 'card-sub' }, 'What kind of story is this, and where does it take place? The GM grounds every scene in this.'),
         h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
         h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa)),
-      h('label', { class: 'form-row' }, h('span', null, 'Character name'), charInp),
-      h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charDescTa),
+      charSection,
       h('div', { class: 'create-section' },
         h('h3', null, 'Story setup'),
         h('p', { class: 'card-sub' }, 'Optional, but this is how you tell the GM what story you want and what to keep in or out.'),
@@ -273,4 +348,7 @@ Views.campaigns = async function (root) {
     ));
     nameInp.focus();
   }
+
+  /* arrived via #/new/<charId> — jump straight into create with that character */
+  if (openCreateCharId) openCreate(openCreateCharId);
 };

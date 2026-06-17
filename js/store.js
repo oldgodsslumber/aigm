@@ -17,9 +17,37 @@ const Store = (function () {
 
   function load() {
     try { db = JSON.parse(localStorage.getItem(KEY)); } catch (e) { db = null; }
-    if (!db || typeof db !== 'object') db = { profile: null, packs: {}, campaigns: {} };
+    if (!db || typeof db !== 'object') db = { profile: null, packs: {}, campaigns: {}, characters: {} };
     db.packs = db.packs || {};
     db.campaigns = db.campaigns || {};
+    db.characters = db.characters || {};
+    migrate();
+  }
+
+  /* One-time schema lift: characters used to live ONLY inside a campaign's
+   * `characters` subcollection. Promote each campaign's player character into
+   * the top-level library so it can be carried into new stories, leaving the
+   * per-story copy in place and linking the two by id. NPCs are unaffected. */
+  function migrate() {
+    if (db.schemaVersion >= 1) return;
+    Object.keys(db.campaigns).forEach(function (cid) {
+      const c = db.campaigns[cid];
+      if (!c.characters) return;
+      const pc = Object.values(c.characters).find(function (x) { return !x.isNPC; });
+      if (!pc || pc.libCharId || c.characterId) return;
+      const libId = newId();
+      db.characters[libId] = {
+        id: libId, ownerUid: c.ownerUid || (db.profile && db.profile.uid) || null,
+        name: pc.name, description: pc.description || '',
+        condition: '', storySoFar: '',
+        createdAt: pc.createdAt || c.createdAt || 0,
+        lastPlayedAt: c.lastPlayedAt || 0, lastPlayedCampaignId: cid
+      };
+      pc.libCharId = libId;
+      c.characterId = libId;
+    });
+    db.schemaVersion = 1;
+    persist();
   }
   function persist() { localStorage.setItem(KEY, JSON.stringify(db)); }
   function clone(o) { return o == null ? o : JSON.parse(JSON.stringify(o)); }
@@ -82,6 +110,56 @@ const Store = (function () {
     },
     deleteCampaign: async function (id) { delete db.campaigns[id]; persist(); },
     touch: async function (cid) { camp(cid).lastPlayedAt = Date.now(); persist(); },
+
+    /* character library (top-level, portable across stories). Distinct from the
+     * per-campaign `characters` subcollection, which holds each story's own
+     * evolving copy of the PC plus its NPCs. */
+    listLibChars: async function () {
+      const uid = this.uid();
+      return Object.values(db.characters)
+        .filter(function (c) { return !uid || !c.ownerUid || c.ownerUid === uid; })
+        .map(clone)
+        .sort(function (a, b) { return (b.lastPlayedAt || b.createdAt || 0) - (a.lastPlayedAt || a.createdAt || 0); });
+    },
+    getLibChar: async function (id) { return clone(db.characters[id] || null); },
+    saveLibChar: async function (ch) {
+      ch.id = ch.id || newId();
+      ch.ownerUid = ch.ownerUid || this.uid();
+      ch.createdAt = ch.createdAt || Date.now();
+      db.characters[ch.id] = clone(ch); persist();
+      return ch.id;
+    },
+    deleteLibChar: async function (id) { delete db.characters[id]; persist(); },
+    /* campaigns this library character appears in (newest played first) */
+    storiesForChar: async function (charId) {
+      return Object.values(db.campaigns).map(meta)
+        .filter(function (c) { return c.characterId === charId; })
+        .map(clone)
+        .sort(function (a, b) { return (b.lastPlayedAt || b.createdAt || 0) - (a.lastPlayedAt || a.createdAt || 0); });
+    },
+    /* Snapshot the current story's PC state back onto the library character so
+     * the next story can continue from it: latest bio, current condition (the
+     * live pc wiki entry), and a "story so far" recap from closed scenes. */
+    saveCharacterProgress: async function (cid) {
+      const c = camp(cid);
+      if (!c.characterId) return null;
+      const lib = db.characters[c.characterId];
+      if (!lib) return null;
+      const pc = Object.values(c.characters).find(function (x) { return !x.isNPC; });
+      const pcWiki = Object.values(c.wiki).find(function (e) { return !e.mergedInto && e.type === 'pc'; });
+      const recap = Object.values(c.scenes)
+        .sort(function (a, b) { return (a.startedAt || 0) - (b.startedAt || 0); })
+        .filter(function (s) { return s.status === 'closed' && s.summary; })
+        .map(function (s) { return '— ' + (s.title || 'Scene') + ': ' + s.summary; })
+        .join('\n');
+      if (pc && pc.description) lib.description = pc.description;
+      if (pcWiki && pcWiki.body) lib.condition = pcWiki.body;
+      if (recap) lib.storySoFar = recap;
+      lib.lastPlayedAt = Date.now();
+      lib.lastPlayedCampaignId = cid;
+      persist();
+      return clone(lib);
+    },
 
     /* characters */
     listCharacters: async function (cid) { return clone(Object.values(camp(cid).characters)); },
