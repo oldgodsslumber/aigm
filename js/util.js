@@ -78,6 +78,35 @@ var Speech = (function () {
     synth.onvoiceschanged = function () { try { synth.getVoices(); } catch (e) {} emitReady(); };
   }
 
+  /* Autoplay unlock. Browsers block speechSynthesis.speak() that isn't tied to a
+   * recent user gesture — which kills drive-mode auto-read, since it fires after
+   * the (async) GM reply lands, long past the tap that started the turn. Speaking
+   * a single silent utterance from within a real gesture unlocks speech for the
+   * rest of the page session, so later programmatic reads are allowed. We hook
+   * the first pointer/key/touch event anywhere and prime once. */
+  var unlocked = false;
+  function prime() {
+    if (!synth || unlocked) return;
+    try {
+      var u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0;
+      synth.speak(u);
+      synth.resume();
+      unlocked = true;
+    } catch (e) { /* ignore */ }
+  }
+  if (synth && typeof document !== 'undefined') {
+    var primeOnce = function () {
+      prime();
+      document.removeEventListener('pointerdown', primeOnce, true);
+      document.removeEventListener('touchstart', primeOnce, true);
+      document.removeEventListener('keydown', primeOnce, true);
+    };
+    document.addEventListener('pointerdown', primeOnce, true);
+    document.addEventListener('touchstart', primeOnce, true);
+    document.addEventListener('keydown', primeOnce, true);
+  }
+
   function supported() {
     /* iOS WebKit doesn't always report the constructor as typeof "function",
      * so check for existence, not the exact type. */
@@ -109,6 +138,20 @@ var Speech = (function () {
   function getRate() { var r = parseFloat(pref('aigm.ttsRate', '1')); return (r >= 0.5 && r <= 2) ? r : 1; }
   function setRate(r) { setPref('aigm.ttsRate', String(r)); }
 
+  /* TTS provider: 'device' (Web Speech API, default) or 'elevenlabs' (cloud,
+   * needs an API key). The ElevenLabs key/voice/model live in localStorage,
+   * device-local like the rest of the read-aloud prefs — they never sync. */
+  function getProvider() { return pref('aigm.ttsProvider', 'device') === 'elevenlabs' ? 'elevenlabs' : 'device'; }
+  function setProvider(p) { setPref('aigm.ttsProvider', p === 'elevenlabs' ? 'elevenlabs' : 'device'); }
+  function getElevenKey() { return pref('aigm.elevenKey', ''); }
+  function setElevenKey(k) { setPref('aigm.elevenKey', k || ''); }
+  function getElevenVoice() { return pref('aigm.elevenVoice', ''); }
+  function setElevenVoice(v) { setPref('aigm.elevenVoice', v || ''); }
+  function getElevenModel() { return pref('aigm.elevenModel', 'eleven_multilingual_v2'); }
+  function setElevenModel(m) { setPref('aigm.elevenModel', m || ''); }
+  /* ElevenLabs is "ready" once a key and a voice are chosen. */
+  function elevenReady() { return !!(getElevenKey() && getElevenVoice()); }
+
   /* resolve the saved preference to a live voice object (URI first, then name) */
   function chosenVoice() {
     var uri = getVoiceURI();
@@ -130,28 +173,108 @@ var Speech = (function () {
     return out;
   }
 
+  /* Chrome stops feeding audio after ~15s of synthesis (a long-standing bug);
+   * a periodic resume() keeps a multi-sentence read going to the end. */
+  var keepAlive = null;
+  var audioEl = null;            // active ElevenLabs <audio>, if any
+  function stopAudio() {
+    if (!audioEl) return;
+    var a = audioEl; audioEl = null;
+    try { a.pause(); } catch (e) {}
+    a.onended = a.onerror = null;
+    if (a.src && a.src.indexOf('blob:') === 0) { try { URL.revokeObjectURL(a.src); } catch (e) {} }
+  }
+  function startKeepAlive() {
+    stopKeepAlive();
+    keepAlive = setInterval(function () {
+      if (synth && current) { try { synth.resume(); } catch (e) {} }
+      else stopKeepAlive();
+    }, 8000);
+  }
+  function stopKeepAlive() { if (keepAlive) { clearInterval(keepAlive); keepAlive = null; } }
+
   function clearCurrent() {
     var s = current; current = null;
+    stopKeepAlive();
     if (s && s.reset) { var r = s.reset; s.reset = null; r(); }
   }
 
   function stop() {
     clearCurrent();
+    stopAudio();
     if (synth) synth.cancel();
+  }
+
+  /* Fetch the account's voices for the settings dropdown. cb(list|null) where
+   * list is [{id, name}]. Errors (bad key, offline) resolve to null. */
+  function elevenVoices(key, cb) {
+    key = key || getElevenKey();
+    if (!key) { cb(null); return; }
+    fetch('https://api.elevenlabs.io/v2/voices?page_size=100', { headers: { 'xi-api-key': key } })
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        var vs = (j && j.voices) || [];
+        cb(vs.map(function (v) { return { id: v.voice_id, name: v.name + (v.category ? ' (' + v.category + ')' : '') }; }));
+      })
+      .catch(function () { cb(null); });
+  }
+
+  /* Speak via ElevenLabs: one request for the whole passage, played through an
+   * <audio> element. Returns true synchronously (playback is async); onend fires
+   * when audio finishes, errors, or is stopped — same contract as device speak. */
+  function speakEleven(text, opts, session) {
+    var rate = opts.rate || getRate();
+    var done = function () { if (current === session) clearCurrent(); };
+    fetch('https://api.elevenlabs.io/v1/text-to-speech/' + encodeURIComponent(getElevenVoice()), {
+      method: 'POST',
+      headers: { 'xi-api-key': getElevenKey(), 'Content-Type': 'application/json', 'Accept': 'audio/mpeg' },
+      body: JSON.stringify({
+        text: text,
+        model_id: getElevenModel(),
+        voice_settings: { stability: 0.5, similarity_boost: 0.75 }
+      })
+    }).then(function (res) {
+      if (current !== session) return null;           // superseded by a newer speak/stop
+      if (!res.ok) throw new Error('ElevenLabs ' + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      if (!blob || current !== session) return;
+      var a = new Audio(URL.createObjectURL(blob));
+      a.playbackRate = rate;                           // reuse the device speed slider
+      audioEl = a;
+      a.onended = done; a.onerror = done;
+      a.play().catch(done);
+    }).catch(function (e) {
+      done();
+      if (typeof Toast === 'function') Toast('ElevenLabs read-aloud failed (' + (e && e.message || 'error') + ').');
+    });
+    return true;
   }
 
   /* opts: { rate, pitch, lang, onend }. onend doubles as a UI-reset callback —
    * it fires when speech finishes naturally OR is stopped/superseded. */
   function speak(text, opts) {
+    opts = opts || {};
+    /* ElevenLabs path — only when selected AND configured; otherwise fall
+     * through to the device voice so a half-set-up key never breaks read-aloud. */
+    if (getProvider() === 'elevenlabs' && elevenReady()) {
+      stop();
+      var clean = stripMd(text);
+      if (!clean) return false;
+      var es = { reset: opts.onend || null };
+      current = es;
+      return speakEleven(clean, opts, es);
+    }
     if (!supported()) return false;
     stop();
     var chunks = chunkText(stripMd(text));
     if (!chunks.length) return false;
-    opts = opts || {};
     var session = { reset: opts.onend || null };
     current = session;
     var voice = opts.voice || chosenVoice();
     var rate = opts.rate || getRate();
+    try { synth.resume(); } catch (e) {}   // clear any stuck paused state before queuing
+    startKeepAlive();
     chunks.forEach(function (c, idx) {
       var u = new SpeechSynthesisUtterance(c);
       u.rate = rate;
@@ -169,11 +292,20 @@ var Speech = (function () {
 
   function speaking() { return !!current; }
 
+  /* True when read-aloud can work at all (either provider). Drives whether the
+   * 🔊 controls are offered, regardless of which provider is active. */
+  function available() { return supported() || elevenReady(); }
+
   return {
-    supported: supported, speak: speak, stop: stop, speaking: speaking,
+    supported: supported, available: available, speak: speak, stop: stop, speaking: speaking, prime: prime,
     voices: voices, onVoices: onVoices,
     getVoiceURI: getVoiceURI, setVoiceURI: setVoiceURI,
-    getRate: getRate, setRate: setRate
+    getRate: getRate, setRate: setRate,
+    getProvider: getProvider, setProvider: setProvider,
+    getElevenKey: getElevenKey, setElevenKey: setElevenKey,
+    getElevenVoice: getElevenVoice, setElevenVoice: setElevenVoice,
+    getElevenModel: getElevenModel, setElevenModel: setElevenModel,
+    elevenReady: elevenReady, elevenVoices: elevenVoices
   };
 })();
 

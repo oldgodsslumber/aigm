@@ -103,14 +103,23 @@ Views.settings = async function (root) {
     Toast('Settings saved.');
   });
 
-  /* ---- read-aloud (text-to-speech) voice — device-local, saved on change ---- */
-  const voiceSel = h('select', null);
+  /* ---- read-aloud (text-to-speech) — device-local, saved on change ---- */
+  /* provider: device (Web Speech) or ElevenLabs (cloud). */
+  const providerSel = h('select', null,
+    h('option', { value: 'device' }, 'Device voices (free, on-device)'),
+    h('option', { value: 'elevenlabs' }, 'ElevenLabs (cloud, your own API key)'));
+  providerSel.value = Speech.getProvider();
+  providerSel.addEventListener('change', function () { Speech.setProvider(providerSel.value); syncProvider(); });
+
+  /* speed — shared by both providers (device rate / ElevenLabs playbackRate) */
   const ttsRate = h('input', { type: 'range', min: '0.5', max: '2', step: '0.05', value: String(Speech.getRate()) });
   const ttsRateVal = h('span', { class: 'range-val' }, Speech.getRate() + '×');
   ttsRate.addEventListener('input', function () { ttsRateVal.textContent = ttsRate.value + '×'; });
   ttsRate.addEventListener('change', function () { Speech.setRate(Number(ttsRate.value)); });
-  voiceSel.addEventListener('change', function () { Speech.setVoiceURI(voiceSel.value); });
 
+  /* device voices */
+  const voiceSel = h('select', null);
+  voiceSel.addEventListener('change', function () { Speech.setVoiceURI(voiceSel.value); });
   function populateVoices() {
     const vs = Speech.voices();
     const cur = Speech.getVoiceURI();
@@ -131,25 +140,88 @@ Views.settings = async function (root) {
   populateVoices();
   Speech.onVoices(populateVoices);
 
+  const deviceNote = Speech.supported()
+    ? 'The list shows whatever voices this device exposes to the browser. On iPhone, Siri and most “premium” voices are unavailable to web apps (an Apple limitation): Settings → Accessibility → Spoken Content → Voices → English → download a voice, then reopen the tab. Android and desktop Chrome usually list many more.'
+    : 'This browser does not expose on-device text-to-speech. Switch the provider to ElevenLabs above, or try Chrome/Safari.';
+  const deviceBlock = h('div', { class: 'settings-sub' },
+    row('Voice', voiceSel),
+    h('p', { class: 'sf-hint' }, deviceNote));
+
+  /* ElevenLabs */
+  const elevenKey = h('input', { type: 'password', value: Speech.getElevenKey(), placeholder: 'sk_…', autocomplete: 'off' });
+  const elevenShow = h('button', { class: 'btn small', type: 'button' }, 'Show');
+  elevenShow.addEventListener('click', function () {
+    const is = elevenKey.type === 'password';
+    elevenKey.type = is ? 'text' : 'password';
+    elevenShow.textContent = is ? 'Hide' : 'Show';
+  });
+  elevenKey.addEventListener('change', function () { Speech.setElevenKey(elevenKey.value.trim()); });
+
+  const elevenVoiceSel = h('select', null);
+  elevenVoiceSel.addEventListener('change', function () { Speech.setElevenVoice(elevenVoiceSel.value); });
+  const elevenLoad = h('button', { class: 'btn small', type: 'button' }, 'Load voices');
+
+  function populateEleven(list) {
+    const cur = Speech.getElevenVoice();
+    elevenVoiceSel.innerHTML = '';
+    if (!list || !list.length) {
+      elevenVoiceSel.append(h('option', { value: cur || '' }, cur ? 'Saved voice' : '(load voices with your key)'));
+      elevenVoiceSel.value = cur || '';
+      return;
+    }
+    if (cur && !list.some(function (v) { return v.id === cur; })) {
+      elevenVoiceSel.append(h('option', { value: cur }, 'Saved voice'));
+    }
+    list.forEach(function (v) { elevenVoiceSel.append(h('option', { value: v.id }, v.name)); });
+    if (!cur) Speech.setElevenVoice(list[0].id);
+    elevenVoiceSel.value = Speech.getElevenVoice() || list[0].id;
+  }
+  function loadEleven() {
+    const key = elevenKey.value.trim();
+    Speech.setElevenKey(key);
+    if (!key) { Toast('Enter your ElevenLabs API key first.'); return; }
+    elevenLoad.disabled = true; elevenLoad.textContent = 'Loading…';
+    Speech.elevenVoices(key, function (list) {
+      elevenLoad.disabled = false; elevenLoad.textContent = 'Load voices';
+      if (!list) { Toast('Could not load voices — check the API key.'); return; }
+      populateEleven(list);
+      Toast(list.length + ' voices loaded.');
+    });
+  }
+  elevenLoad.addEventListener('click', loadEleven);
+  populateEleven(null);
+  if (Speech.getElevenKey()) loadEleven();   // refresh on open when a key is saved
+
+  const elevenBlock = h('div', { class: 'settings-sub' },
+    row('API key', h('div', { class: 'inline-pair' }, elevenKey, elevenShow)),
+    row('Voice', h('div', { class: 'inline-pair' }, elevenVoiceSel, elevenLoad)),
+    h('p', { class: 'sf-hint' }, 'Get a key at elevenlabs.com → Profile → API Keys. It is stored only in this browser and sent directly to ElevenLabs. Cloud TTS uses your ElevenLabs character quota each time the GM reads aloud — mind it in Drive mode’s auto-read.'));
+
+  function syncProvider() {
+    const eleven = providerSel.value === 'elevenlabs';
+    deviceBlock.style.display = eleven ? 'none' : '';
+    elevenBlock.style.display = eleven ? '' : 'none';
+  }
+
   const testBtn = h('button', { class: 'btn small', type: 'button' }, '🔊 Test voice');
   testBtn.addEventListener('click', function () {
     Speech.setVoiceURI(voiceSel.value);
+    Speech.setElevenVoice(elevenVoiceSel.value);
     Speech.setRate(Number(ttsRate.value));
     const ok = Speech.speak('This is how the Game Master will sound when reading your story aloud.', {});
-    if (!ok) Toast('Text-to-speech isn\'t available in this browser.');
+    if (!ok) Toast(providerSel.value === 'elevenlabs'
+      ? 'Add your ElevenLabs API key and pick a voice first.'
+      : 'Text-to-speech isn\'t available in this browser.');
   });
 
-  const ttsCard = Speech.supported()
-    ? h('section', { class: 'settings-card' },
-        h('h2', null, 'Read-aloud voice'),
-        h('p', { class: 'card-sub' }, 'Voice for the 🔊 Read button in Play. The list shows whatever voices this device exposes to the browser; changes save automatically.'),
-        row('Voice', voiceSel),
-        row('Speed', h('div', { class: 'inline-pair' }, ttsRate, ttsRateVal)),
-        h('div', { class: 'inline-pair' }, testBtn),
-        h('p', { class: 'sf-hint' }, 'On iPhone, Siri and most “premium” voices are not available to web apps — an Apple limitation, not a bug. To add what you can: Settings → Accessibility → Spoken Content → Voices → English → download a voice; any the browser exposes will show up here (you may need to reopen the tab). Android and desktop Chrome usually list many more, including higher-quality “Google”/“Natural” voices.'))
-    : h('section', { class: 'settings-card' },
-        h('h2', null, 'Read-aloud voice'),
-        h('p', { class: 'card-sub' }, 'This browser does not expose text-to-speech, so read-aloud is unavailable here. Try Chrome or Safari.'));
+  const ttsCard = h('section', { class: 'settings-card' },
+    h('h2', null, 'Read-aloud voice'),
+    h('p', { class: 'card-sub' }, 'Voice for the 🔊 Read button in Play. Changes save automatically.'),
+    row('Provider', providerSel),
+    deviceBlock, elevenBlock,
+    row('Speed', h('div', { class: 'inline-pair' }, ttsRate, ttsRateVal)),
+    h('div', { class: 'inline-pair' }, testBtn));
+  syncProvider();
 
   /* ---- drive mode — device-local, saved on toggle ---- */
   const driveToggle = h('input', { type: 'checkbox' });
