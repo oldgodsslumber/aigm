@@ -138,11 +138,13 @@ var Speech = (function () {
   function getRate() { var r = parseFloat(pref('aigm.ttsRate', '1')); return (r >= 0.5 && r <= 2) ? r : 1; }
   function setRate(r) { setPref('aigm.ttsRate', String(r)); }
 
-  /* TTS provider: 'device' (Web Speech API, default) or 'elevenlabs' (cloud,
-   * needs an API key). The ElevenLabs key/voice/model live in localStorage,
-   * device-local like the rest of the read-aloud prefs — they never sync. */
-  function getProvider() { return pref('aigm.ttsProvider', 'device') === 'elevenlabs' ? 'elevenlabs' : 'device'; }
-  function setProvider(p) { setPref('aigm.ttsProvider', p === 'elevenlabs' ? 'elevenlabs' : 'device'); }
+  /* TTS provider: 'device' (Web Speech API, default), 'elevenlabs' (cloud, needs
+   * an API key), or 'alltalk' (a local AllTalk TTS server). All provider prefs
+   * live in localStorage, device-local like the rest of the read-aloud prefs —
+   * they never sync. */
+  var PROVIDERS = { elevenlabs: 1, alltalk: 1 };
+  function getProvider() { var p = pref('aigm.ttsProvider', 'device'); return PROVIDERS[p] ? p : 'device'; }
+  function setProvider(p) { setPref('aigm.ttsProvider', PROVIDERS[p] ? p : 'device'); }
   function getElevenKey() { return pref('aigm.elevenKey', ''); }
   function setElevenKey(k) { setPref('aigm.elevenKey', k || ''); }
   function getElevenVoice() { return pref('aigm.elevenVoice', ''); }
@@ -151,6 +153,15 @@ var Speech = (function () {
   function setElevenModel(m) { setPref('aigm.elevenModel', m || ''); }
   /* ElevenLabs is "ready" once a key and a voice are chosen. */
   function elevenReady() { return !!(getElevenKey() && getElevenVoice()); }
+
+  /* AllTalk: a local TTS server. Needs a base URL (default = AllTalk's stock
+   * 127.0.0.1:7851); the voice is one of the .wav files the server exposes. */
+  function getAlltalkUrl() { return (pref('aigm.alltalkUrl', 'http://127.0.0.1:7851') || '').replace(/\/+$/, ''); }
+  function setAlltalkUrl(u) { setPref('aigm.alltalkUrl', (u || '').replace(/\/+$/, '')); }
+  function getAlltalkVoice() { return pref('aigm.alltalkVoice', ''); }
+  function setAlltalkVoice(v) { setPref('aigm.alltalkVoice', v || ''); }
+  /* "ready" once a server URL is set — the voice falls back to AllTalk's default. */
+  function alltalkReady() { return !!getAlltalkUrl(); }
 
   /* resolve the saved preference to a live voice object (URI first, then name) */
   function chosenVoice() {
@@ -261,19 +272,87 @@ var Speech = (function () {
     return true;
   }
 
+  /* Fetch the AllTalk server's available voices for the settings dropdown.
+   * cb(list|null) where list is [{id, name}]; errors resolve to null. */
+  function alltalkVoices(url, cb) {
+    url = (url || getAlltalkUrl()).replace(/\/+$/, '');
+    if (!url) { cb(null); return; }
+    fetch(url + '/api/voices')
+      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (j) {
+        var vs = (j && j.voices) || [];
+        cb(vs.map(function (v) { return { id: v, name: v }; }));
+      })
+      .catch(function () { cb(null); });
+  }
+
+  /* Speak via a local AllTalk server: POST the passage to /api/tts-generate,
+   * then play the WAV it writes (loaded by URL, so only the small JSON POST
+   * needs CORS, not the audio). Same true-now / onend-later contract. */
+  function speakAlltalk(text, opts, session) {
+    var rate = opts.rate || getRate();
+    var base = getAlltalkUrl();
+    var done = function () { if (current === session) clearCurrent(); };
+    var form = new URLSearchParams();
+    form.set('text_input', text);
+    form.set('text_filtering', 'standard');
+    form.set('character_voice_gen', getAlltalkVoice() || 'female_01.wav');
+    form.set('narrator_enabled', 'false');
+    form.set('narrator_voice_gen', '');
+    form.set('text_not_inside', 'character');
+    form.set('language', 'en');
+    form.set('output_file_name', 'aigm');
+    form.set('output_file_timestamp', 'true');
+    form.set('autoplay', 'false');
+    form.set('autoplay_volume', '0.8');
+    fetch(base + '/api/tts-generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: form.toString()
+    }).then(function (res) {
+      if (current !== session) return null;
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (j) {
+      if (!j || current !== session) return;
+      if (j.status !== 'generate-success') throw new Error(j.status || 'generation failed');
+      var url = j.output_file_url || j.output_cache_url || '';
+      if (/^\//.test(url)) url = base + url;          // AllTalk v2 returns a relative path
+      if (!url) throw new Error('no audio URL returned');
+      var a = new Audio(url);
+      a.playbackRate = rate;
+      audioEl = a;
+      a.onended = done; a.onerror = done;
+      a.play().catch(done);
+    }).catch(function (e) {
+      done();
+      if (typeof Toast === 'function') Toast('AllTalk read-aloud failed: ' + (e && e.message || 'error') + '. Is the AllTalk server running?');
+    });
+    return true;
+  }
+
   /* opts: { rate, pitch, lang, onend }. onend doubles as a UI-reset callback —
    * it fires when speech finishes naturally OR is stopped/superseded. */
   function speak(text, opts) {
     opts = opts || {};
     /* ElevenLabs path — only when selected AND configured; otherwise fall
      * through to the device voice so a half-set-up key never breaks read-aloud. */
-    if (getProvider() === 'elevenlabs' && elevenReady()) {
+    var provider = getProvider();
+    if (provider === 'elevenlabs' && elevenReady()) {
       stop();
       var clean = stripMd(text);
       if (!clean) return false;
       var es = { reset: opts.onend || null };
       current = es;
       return speakEleven(clean, opts, es);
+    }
+    if (provider === 'alltalk' && alltalkReady()) {
+      stop();
+      var cleanAt = stripMd(text);
+      if (!cleanAt) return false;
+      var ats = { reset: opts.onend || null };
+      current = ats;
+      return speakAlltalk(cleanAt, opts, ats);
     }
     if (!supported()) return false;
     stop();
@@ -304,7 +383,7 @@ var Speech = (function () {
 
   /* True when read-aloud can work at all (either provider). Drives whether the
    * 🔊 controls are offered, regardless of which provider is active. */
-  function available() { return supported() || elevenReady(); }
+  function available() { return supported() || elevenReady() || alltalkReady(); }
 
   return {
     supported: supported, available: available, speak: speak, stop: stop, speaking: speaking, prime: prime,
@@ -315,7 +394,10 @@ var Speech = (function () {
     getElevenKey: getElevenKey, setElevenKey: setElevenKey,
     getElevenVoice: getElevenVoice, setElevenVoice: setElevenVoice,
     getElevenModel: getElevenModel, setElevenModel: setElevenModel,
-    elevenReady: elevenReady, elevenVoices: elevenVoices
+    elevenReady: elevenReady, elevenVoices: elevenVoices,
+    getAlltalkUrl: getAlltalkUrl, setAlltalkUrl: setAlltalkUrl,
+    getAlltalkVoice: getAlltalkVoice, setAlltalkVoice: setAlltalkVoice,
+    alltalkReady: alltalkReady, alltalkVoices: alltalkVoices
   };
 })();
 

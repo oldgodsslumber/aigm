@@ -107,7 +107,8 @@ Views.settings = async function (root) {
   /* provider: device (Web Speech) or ElevenLabs (cloud). */
   const providerSel = h('select', null,
     h('option', { value: 'device' }, 'Device voices (free, on-device)'),
-    h('option', { value: 'elevenlabs' }, 'ElevenLabs (cloud, your own API key)'));
+    h('option', { value: 'elevenlabs' }, 'ElevenLabs (cloud, your own API key)'),
+    h('option', { value: 'alltalk' }, 'AllTalk (local TTS server)'));
   providerSel.value = Speech.getProvider();
   providerSel.addEventListener('change', function () { Speech.setProvider(providerSel.value); syncProvider(); });
 
@@ -197,28 +198,74 @@ Views.settings = async function (root) {
     row('Voice', h('div', { class: 'inline-pair' }, elevenVoiceSel, elevenLoad)),
     h('p', { class: 'sf-hint' }, 'Get a key at elevenlabs.com → Profile → API Keys. It is stored only in this browser and sent directly to ElevenLabs. Cloud TTS uses your ElevenLabs character quota each time the GM reads aloud — mind it in Drive mode’s auto-read.'));
 
+  /* AllTalk — a local TTS server */
+  const alltalkUrl = h('input', { type: 'text', value: Speech.getAlltalkUrl(), placeholder: 'http://127.0.0.1:7851' });
+  alltalkUrl.addEventListener('change', function () { Speech.setAlltalkUrl(alltalkUrl.value.trim()); });
+  const alltalkVoiceSel = h('select', null);
+  alltalkVoiceSel.addEventListener('change', function () { Speech.setAlltalkVoice(alltalkVoiceSel.value); });
+  const alltalkLoad = h('button', { class: 'btn small', type: 'button' }, 'Load voices');
+
+  function populateAlltalk(list) {
+    const cur = Speech.getAlltalkVoice();
+    alltalkVoiceSel.innerHTML = '';
+    if (!list || !list.length) {
+      alltalkVoiceSel.append(h('option', { value: cur || '' }, cur ? cur : '(load voices from the server)'));
+      alltalkVoiceSel.value = cur || '';
+      return;
+    }
+    if (cur && !list.some(function (v) { return v.id === cur; })) {
+      alltalkVoiceSel.append(h('option', { value: cur }, cur + ' (saved)'));
+    }
+    list.forEach(function (v) { alltalkVoiceSel.append(h('option', { value: v.id }, v.name)); });
+    if (!cur) Speech.setAlltalkVoice(list[0].id);
+    alltalkVoiceSel.value = Speech.getAlltalkVoice() || list[0].id;
+  }
+  function loadAlltalk() {
+    const url = alltalkUrl.value.trim();
+    Speech.setAlltalkUrl(url);
+    if (!url) { Toast('Enter the AllTalk server URL first.'); return; }
+    alltalkLoad.disabled = true; alltalkLoad.textContent = 'Loading…';
+    Speech.alltalkVoices(url, function (list) {
+      alltalkLoad.disabled = false; alltalkLoad.textContent = 'Load voices';
+      if (!list) { Toast('Could not reach AllTalk — is the server running at that URL?'); return; }
+      populateAlltalk(list);
+      Toast(list.length + ' voices loaded.');
+    });
+  }
+  alltalkLoad.addEventListener('click', loadAlltalk);
+  populateAlltalk(null);
+
+  const alltalkBlock = h('div', { class: 'settings-sub' },
+    row('Server URL', alltalkUrl),
+    row('Voice', h('div', { class: 'inline-pair' }, alltalkVoiceSel, alltalkLoad)),
+    h('p', { class: 'sf-hint' }, 'Point this at a running AllTalk TTS server (its default is http://127.0.0.1:7851). Click Load voices to list the server’s voices. AllTalk runs on your own machine, so this only works on a device that can reach that URL — and a browser may block a local http:// server from an https:// page (open the app over http/localhost, or allow insecure content for this site).'));
+
   function syncProvider() {
-    const eleven = providerSel.value === 'elevenlabs';
-    deviceBlock.style.display = eleven ? 'none' : '';
-    elevenBlock.style.display = eleven ? '' : 'none';
+    const p = providerSel.value;
+    deviceBlock.style.display = p === 'device' ? '' : 'none';
+    elevenBlock.style.display = p === 'elevenlabs' ? '' : 'none';
+    alltalkBlock.style.display = p === 'alltalk' ? '' : 'none';
   }
 
   const testBtn = h('button', { class: 'btn small', type: 'button' }, '🔊 Test voice');
   testBtn.addEventListener('click', function () {
     Speech.setVoiceURI(voiceSel.value);
     Speech.setElevenVoice(elevenVoiceSel.value);
+    Speech.setAlltalkVoice(alltalkVoiceSel.value);
     Speech.setRate(Number(ttsRate.value));
     const ok = Speech.speak('This is how the Game Master will sound when reading your story aloud.', {});
     if (!ok) Toast(providerSel.value === 'elevenlabs'
       ? 'Add your ElevenLabs API key and pick a voice first.'
-      : 'Text-to-speech isn\'t available in this browser.');
+      : providerSel.value === 'alltalk'
+        ? 'Enter your AllTalk server URL first.'
+        : 'Text-to-speech isn\'t available in this browser.');
   });
 
   const ttsCard = h('section', { class: 'settings-card' },
     h('h2', null, 'Read-aloud voice'),
     h('p', { class: 'card-sub' }, 'Voice for the 🔊 Read button in Play. Changes save automatically.'),
     row('Provider', providerSel),
-    deviceBlock, elevenBlock,
+    deviceBlock, elevenBlock, alltalkBlock,
     row('Speed', h('div', { class: 'inline-pair' }, ttsRate, ttsRateVal)),
     h('div', { class: 'inline-pair' }, testBtn));
   syncProvider();
