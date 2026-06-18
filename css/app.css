@@ -21,7 +21,10 @@
 }
 
 * { box-sizing: border-box; }
-html, body { height: 100%; }
+html { height: 100%; }
+/* min-height (not height) so the body grows with its content — otherwise it's
+ * capped at one viewport and the sticky topbar detaches once you scroll past. */
+body { min-height: 100%; }
 body {
   margin: 0;
   background: var(--bg0);

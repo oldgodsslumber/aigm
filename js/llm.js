@@ -119,19 +119,63 @@ const LLM = (function () {
    * is NOT a temporary rate limit — it means the key has no free-tier quota
    * (usually a billing-enabled project, or a key not made through AI Studio). */
   function buildGeminiErrorMessage(status, errText, model) {
-    let msg = '';
-    try { msg = (JSON.parse(errText).error || {}).message || ''; } catch (e) { /* ignore */ }
+    let err = {};
+    try { err = (JSON.parse(errText).error) || {}; } catch (e) { /* ignore */ }
+    const msg = err.message || '';
+    const details = Array.isArray(err.details) ? err.details : [];
 
-    if (status === 429 && /limit:\s*0/i.test(msg) && /free_tier/i.test(msg)) {
-      return [
-        'Gemini ' + status + ' — this API key has zero free-tier quota (not a temporary rate limit).',
-        'Most likely the key is from a Google Cloud project with billing enabled, or it wasn\'t created through AI Studio.',
-        'Fix: open https://aistudio.google.com/app/api-keys, delete this key, create a new one and let AI Studio pick the project, then paste it into Settings.'
-      ].join('\n');
-    }
     if (status === 429) {
-      const m = msg.match(/retry in (\d+)/i);
-      return 'Gemini rate limit hit for ' + labelFor(model) + '.' + (m ? ' Retry in ~' + m[1] + 's.' : '');
+      /* Google packs the specifics into error.details:
+       *   - QuotaFailure: which quota tripped (quotaId / quotaMetric names the
+       *     window — "PerDay" vs "PerMinute") and its limit (0 = no quota).
+       *   - RetryInfo: how long to wait (retryDelay like "27s").
+       * We read these structured fields, falling back to the message text. */
+      let quotaId = '', quotaMetric = '', limitZero = false, retrySecs = null;
+      details.forEach(function (d) {
+        const type = d['@type'] || '';
+        if (/QuotaFailure/i.test(type) && Array.isArray(d.violations)) {
+          d.violations.forEach(function (v) {
+            quotaId = quotaId || v.quotaId || '';
+            quotaMetric = quotaMetric || v.quotaMetric || '';
+            if (v.quotaValue === '0' || v.quotaValue === 0) limitZero = true;
+          });
+        }
+        if (/RetryInfo/i.test(type) && d.retryDelay) {
+          const rm = String(d.retryDelay).match(/(\d+)/);
+          if (rm) retrySecs = rm[1];
+        }
+      });
+      if (retrySecs == null) {
+        const m = msg.match(/retry in (\d+)/i);
+        if (m) retrySecs = m[1];
+      }
+      const quotaStr = quotaId + ' ' + quotaMetric;
+      const perDay = /PerDay|RequestsPerDay/i.test(quotaStr);
+      const perMinute = /PerMinute|RequestsPerMinute/i.test(quotaStr);
+
+      /* No quota at all — billing-enabled or non-AI-Studio key. Not temporary. */
+      if (limitZero || (/limit:\s*0/i.test(msg) && /free_tier/i.test(msg))) {
+        return [
+          'Gemini ' + status + ' — this API key has zero free-tier quota (not a temporary rate limit).',
+          'Most likely the key is from a Google Cloud project with billing enabled, or it wasn\'t created through AI Studio.',
+          'Fix: open https://aistudio.google.com/app/api-keys, delete this key, create a new one and let AI Studio pick the project, then paste it into Settings.'
+        ].join('\n');
+      }
+      /* Daily free-tier quota used up — won't clear until midnight Pacific. */
+      if (perDay) {
+        return [
+          'Gemini daily quota used up for ' + labelFor(model) + ' — you\'ve hit Google\'s free-tier requests-per-day limit.',
+          'This resets at midnight Pacific, not in a few seconds. The app already falls through to other models automatically;',
+          'if they\'re all spent, switch to a Gemma model in Settings (much larger daily quota) or try again tomorrow.'
+        ].join('\n');
+      }
+      /* Per-minute burst limit — genuinely temporary, clears in seconds. */
+      if (perMinute) {
+        return 'Gemini per-minute rate limit hit for ' + labelFor(model) + ' (too many requests too fast). ' +
+          'This clears on its own' + (retrySecs ? ' — wait ~' + retrySecs + 's and try again.' : ' in under a minute — just wait and retry.');
+      }
+      /* Window unknown — generic 429 with whatever retry hint we found. */
+      return 'Gemini rate limit hit for ' + labelFor(model) + '.' + (retrySecs ? ' Retry in ~' + retrySecs + 's.' : '');
     }
     if (status === 400 && /API key not valid/i.test(msg)) {
       return 'Gemini rejected the API key — re-paste it from https://aistudio.google.com/app/api-keys (starts with AIza…).';
@@ -144,6 +188,60 @@ const LLM = (function () {
         (msg ? '\n\nGoogle\'s message: ' + msg.slice(0, 200) : '');
     }
     return 'Gemini error (' + status + ')' + (msg ? ': ' + msg : '');
+  }
+
+  /* Build a player-friendly message for a 200-OK response that carried no text.
+   * Unlike HTTP errors (handled in buildGeminiErrorMessage), these come back as
+   * a successful call whose candidate has no usable parts. Gemini signals the
+   * actual reason two ways:
+   *   - promptFeedback.blockReason — the *input* was blocked before generation
+   *   - candidate.finishReason     — generation started then stopped/was cut
+   * We surface each distinctly so the player knows whether to rephrase, retry,
+   * switch models, or raise the token budget. */
+  function buildEmptyResponseMessage(data, cand, model) {
+    /* 1) The whole prompt was rejected — nothing was generated at all. */
+    const pf = data && data.promptFeedback;
+    if (pf && pf.blockReason) {
+      if (/SAFETY/i.test(pf.blockReason)) {
+        return 'Gemini blocked your prompt as unsafe before generating anything. ' +
+          'Safety filters are already off for ' + labelFor(model) + ', so this is a hard block — ' +
+          'try rephrasing, or switch to a Gemma model in Settings (filtered differently).';
+      }
+      return 'Gemini blocked your prompt (' + pf.blockReason + ') before generating anything. ' +
+        'Try rephrasing it, or switch models in Settings.';
+    }
+
+    /* 2) Generation started, then stopped without emitting text. */
+    const reason = cand && cand.finishReason;
+    switch (reason) {
+      case 'MAX_TOKENS':
+        return 'Gemini hit its output limit before returning any text — its "thinking" used the whole budget. ' +
+          'Try a narrower topic, raise the token budget, or pick a non-2.5 model in Settings.';
+      case 'SAFETY':
+        return 'Gemini stopped on its safety filter and returned nothing. ' +
+          'Filters are already off for ' + labelFor(model) + ', so try rephrasing, ' +
+          'or switch to a Gemma model in Settings (filtered differently).';
+      case 'RECITATION':
+        return 'Gemini stopped because its reply matched copyrighted/recited material. ' +
+          'Rephrase to ask for original content, or retry — this is often non-deterministic.';
+      case 'PROHIBITED_CONTENT':
+      case 'SPII':
+      case 'BLOCKLIST':
+        return 'Gemini refused to answer (' + reason + ') and returned nothing. ' +
+          'Try rephrasing, or switch models in Settings.';
+      case 'OTHER':
+        return 'Gemini stopped for an unspecified reason (finishReason: OTHER) and returned no text. ' +
+          'This is usually transient — try again, or switch models in Settings.';
+      case 'STOP':
+      case undefined:
+      case null:
+        /* Finished "normally" but empty — typically a 2.5 model whose thinking
+         * ate the entire budget, or a momentary hiccup. */
+        return 'Gemini returned an empty reply. This usually means its "thinking" consumed the output budget — ' +
+          'retry, raise the token budget, or pick a non-2.5 model (e.g. a Gemma) in Settings.';
+      default:
+        return 'Gemini returned no text (finishReason: ' + reason + '). Try again, or switch models in Settings.';
+    }
   }
 
   /* fetch with an abort-based timeout so a stuck request fails fast instead of
@@ -231,11 +329,7 @@ const LLM = (function () {
     const text = cand && cand.content && cand.content.parts
       ? cand.content.parts.map(function (p) { return p.text || ''; }).join('') : '';
     if (!text) {
-      const reason = cand && cand.finishReason;
-      if (reason === 'MAX_TOKENS') {
-        throw new Error('Gemini hit its output limit before returning any text. Try a narrower topic, or raise the token budget.');
-      }
-      throw new Error('Gemini returned no text' + (reason ? ' (finishReason: ' + reason + ')' : '') + '.');
+      throw new Error(buildEmptyResponseMessage(data, cand, model));
     }
     return text;
   }

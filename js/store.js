@@ -21,6 +21,7 @@ const Store = (function () {
     db.packs = db.packs || {};
     db.campaigns = db.campaigns || {};
     db.characters = db.characters || {};
+    db.checkpoints = db.checkpoints || {};
     migrate();
   }
 
@@ -100,6 +101,17 @@ const Store = (function () {
         .sort(function (a, b) { return (b.lastPlayedAt || b.createdAt || 0) - (a.lastPlayedAt || a.createdAt || 0); });
     },
     getCampaign: async function (id) { return clone(meta(camp(id))); },
+    /* Sync: id of the most-recently-opened campaign (touch() stamps lastPlayedAt
+     * on every open). Used so the "Campaigns" nav can deep-link back into it. */
+    lastCampaignId: function () {
+      let best = null, bestT = -1;
+      Object.keys(db.campaigns).forEach(function (id) {
+        const c = db.campaigns[id];
+        const t = c.lastPlayedAt || c.createdAt || 0;
+        if (t > bestT) { bestT = t; best = id; }
+      });
+      return best;
+    },
     saveCampaign: async function (m) {
       m.id = m.id || newId();
       const existing = db.campaigns[m.id] || { characters: {}, sheetLog: [], scenes: {}, transcript: [], wiki: {} };
@@ -108,7 +120,7 @@ const Store = (function () {
       db.campaigns[m.id] = merged; persist();
       return m.id;
     },
-    deleteCampaign: async function (id) { delete db.campaigns[id]; persist(); },
+    deleteCampaign: async function (id) { delete db.campaigns[id]; delete db.checkpoints[id]; persist(); },
     touch: async function (cid) { camp(cid).lastPlayedAt = Date.now(); persist(); },
 
     /* character library (top-level, portable across stories). Distinct from the
@@ -227,6 +239,55 @@ const Store = (function () {
       emit('wiki', { campaignId: cid });
       return entry.id;
     },
+
+    /* save point (single slot per campaign) — a deep copy of the whole story
+     * state so the player can roll back a risky move. Only one is kept; saving
+     * again overwrites it. The portable character library and Settings are NOT
+     * snapshotted on purpose — rolling back the story shouldn't touch them. */
+    saveCheckpoint: async function (cid, label) {
+      const c = camp(cid);
+      db.checkpoints[cid] = {
+        ts: Date.now(),
+        label: label || '',
+        sceneTitle: (c.scenes[c.currentSceneId] || {}).title || '',
+        messageCount: (c.transcript || []).length,
+        snapshot: {
+          currentSceneId: c.currentSceneId,
+          characters: clone(c.characters),
+          sheetLog: clone(c.sheetLog),
+          scenes: clone(c.scenes),
+          transcript: clone(c.transcript),
+          wiki: clone(c.wiki)
+        }
+      };
+      persist();
+      return { ts: db.checkpoints[cid].ts };
+    },
+    /* metadata only (never the heavy snapshot) so the UI can show/hide controls */
+    getCheckpoint: async function (cid) {
+      const cp = db.checkpoints[cid];
+      if (!cp) return null;
+      return { ts: cp.ts, label: cp.label, sceneTitle: cp.sceneTitle, messageCount: cp.messageCount };
+    },
+    restoreCheckpoint: async function (cid) {
+      const cp = db.checkpoints[cid];
+      if (!cp) return false;
+      const c = camp(cid);
+      const s = cp.snapshot;
+      c.characters = clone(s.characters);
+      c.sheetLog = clone(s.sheetLog);
+      c.scenes = clone(s.scenes);
+      c.transcript = clone(s.transcript);
+      c.wiki = clone(s.wiki);
+      c.currentSceneId = s.currentSceneId;
+      persist();
+      emit('transcript', { campaignId: cid });
+      emit('scenes', { campaignId: cid });
+      emit('wiki', { campaignId: cid });
+      emit('sheet', { campaignId: cid });
+      return true;
+    },
+    clearCheckpoint: async function (cid) { delete db.checkpoints[cid]; persist(); },
 
     /* backup */
     exportAll: function () { return JSON.stringify(db, null, 2); },

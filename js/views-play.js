@@ -44,6 +44,12 @@ Views.play = async function (root, cid) {
   endSceneBtn.addEventListener('click', endScene);
   const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise, boundaries, character & cast' }, 'Story & cast');
   setupBtn.addEventListener('click', editStorySetup);
+  /* ---------- save point (single rollback slot) ---------- */
+  const savePointBtn = h('button', { class: 'btn small ghost', title: 'Save a rollback point you can return to if a risky move goes wrong' }, '⚑ Save point');
+  const restoreBtn = h('button', { class: 'btn small ghost', style: 'display:none', title: 'Roll back to your save point' }, '↺ Restore');
+  savePointBtn.addEventListener('click', function () { openSavePoint(); });
+  restoreBtn.addEventListener('click', function () { openRestore(); });
+
   const saveCharBtn = h('button', { class: 'btn small ghost', title: 'Snapshot this character\'s current state & story so the next adventure can continue from it' }, 'Save character');
   saveCharBtn.addEventListener('click', async function () {
     const lib = await Store.saveCharacterProgress(cid);
@@ -106,7 +112,7 @@ Views.play = async function (root, cid) {
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, reqMeter, saveCharBtn, setupBtn, endSceneBtn)),
+      h('div', { class: 'scene-bar-actions' }, reqMeter, restoreBtn, savePointBtn, saveCharBtn, setupBtn, endSceneBtn)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
@@ -114,6 +120,25 @@ Views.play = async function (root, cid) {
           input, sendBtn),
         drive ? driveBar : null)));
   root.append(play);
+
+  /* Persist the composer text per-campaign so leaving Play (e.g. to Settings)
+   * and coming back doesn't lose an in-progress move. sessionStorage, so it
+   * survives navigation within the session but isn't kept around forever. */
+  const draftKey = 'aigm:draft:' + cid;
+  function saveDraft() {
+    try {
+      if (input.value) sessionStorage.setItem(draftKey, input.value);
+      else sessionStorage.removeItem(draftKey);
+    } catch (e) { /* ignore */ }
+  }
+  function clearDraft() {
+    try { sessionStorage.removeItem(draftKey); } catch (e) { /* ignore */ }
+  }
+  try {
+    const saved = sessionStorage.getItem(draftKey);
+    if (saved) input.value = saved;
+  } catch (e) { /* ignore */ }
+  input.addEventListener('input', saveDraft);
 
   input.addEventListener('keydown', function (e) {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
@@ -229,6 +254,7 @@ Views.play = async function (root, cid) {
     const text = input.value.trim();
     if (!text || busy) return;
     input.value = '';
+    clearDraft();
     const id = await Store.addMessage(cid, { role: 'player', content: text, sceneId: scene.id });
     pendingPlayer = { id: id, text: text };
     messages = await Store.listMessages(cid);
@@ -244,7 +270,7 @@ Views.play = async function (root, cid) {
     if (!p) { showBanner(bannerMsg, false); return; }
     try { await Store.truncateFrom(cid, p.id); } catch (e) { /* ignore */ }
     messages = await Store.listMessages(cid);
-    if (!input.value.trim()) input.value = p.text;
+    if (!input.value.trim()) { input.value = p.text; saveDraft(); }
     renderLog();
     showBanner(bannerMsg, false);
     if (!input.disabled) input.focus();
@@ -511,6 +537,68 @@ Views.play = async function (root, cid) {
   }
 
   /* ---------- scenes ---------- */
+  /* Show/hide the Restore button and reflect whether a save exists. */
+  async function refreshSaveControls() {
+    const cp = await Store.getCheckpoint(cid);
+    if (cp) {
+      restoreBtn.style.display = '';
+      const when = new Date(cp.ts).toLocaleString();
+      restoreBtn.title = 'Roll back to your save point' + (cp.label ? ' “' + cp.label + '”' : '') + ' from ' + when;
+      savePointBtn.textContent = '⚑ Re-save';
+      savePointBtn.title = 'Replace your save point with the current moment';
+    } else {
+      restoreBtn.style.display = 'none';
+      savePointBtn.textContent = '⚑ Save point';
+      savePointBtn.title = 'Save a rollback point you can return to if a risky move goes wrong';
+    }
+  }
+
+  function openSavePoint() {
+    if (busy) { Toast('Hang on — wait for the GM to finish, then save.'); return; }
+    const labelInp = h('input', { type: 'text', placeholder: 'Optional name — e.g. "Before the bridge"', maxlength: '60' });
+    const save = h('button', { class: 'btn accent' }, 'Save point');
+    save.addEventListener('click', async function () {
+      await Store.saveCheckpoint(cid, labelInp.value.trim());
+      Modal.close();
+      await refreshSaveControls();
+      Toast('Save point set. Use Restore to roll back here anytime.');
+    });
+    labelInp.addEventListener('keydown', function (e) { if (e.key === 'Enter') save.click(); });
+    Modal.open(h('div', null,
+      h('h2', null, 'Set a save point'),
+      h('p', { class: 'card-sub' }, 'Captures the whole story right now — transcript, scenes, wiki and cast — so you can roll back if a risky move goes south. Only one save is kept per story; this replaces any previous one.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Name (optional)'), labelInp),
+      h('div', { class: 'modal-actions' }, save)));
+    setTimeout(function () { labelInp.focus(); }, 50);
+  }
+
+  async function openRestore() {
+    if (busy) { Toast('Hang on — wait for the GM to finish, then restore.'); return; }
+    const cp = await Store.getCheckpoint(cid);
+    if (!cp) { Toast('No save point yet — set one first.'); return; }
+    const when = new Date(cp.ts).toLocaleString();
+    const since = messages.length - (cp.messageCount || 0);
+    const restore = h('button', { class: 'btn accent' }, 'Roll back');
+    restore.addEventListener('click', async function () {
+      await Store.restoreCheckpoint(cid);
+      Modal.close();
+      pendingPlayer = null; awaitingSceneSummary = false; lastError = null;
+      banner.style.display = 'none';
+      await loadAll();
+      renderHeader(); renderLog(); renderRequestMeter();
+      await refreshSaveControls();
+      Toast('Rolled back to your save point' + (cp.label ? ' “' + cp.label + '”' : '') + '.');
+    });
+    Modal.open(h('div', null,
+      h('h2', null, 'Roll back to save point'),
+      h('p', null, 'Return to ' + (cp.label ? '“' + cp.label + '” ' : 'your save ') + 'from ' + when +
+        (cp.sceneTitle ? ' (' + cp.sceneTitle + ')' : '') + '.'),
+      since > 0
+        ? h('p', { class: 'card-sub' }, 'Everything since then — ' + since + ' message' + (since === 1 ? '' : 's') + ', plus any scene, wiki or cast changes — will be permanently discarded. The save point itself stays, so you can roll back here again.')
+        : h('p', { class: 'card-sub' }, 'Nothing has changed since this save point.'),
+      h('div', { class: 'modal-actions' }, restore)));
+  }
+
   async function endScene() {
     if (busy) return;
     awaitingSceneSummary = true;
@@ -745,5 +833,6 @@ Views.play = async function (root, cid) {
   renderHeader();
   renderLog();
   renderRequestMeter();
+  refreshSaveControls();
   if (keyMissing() && messages.length) showBanner('No Gemini API key set — add yours in Settings to play.', false);
 };

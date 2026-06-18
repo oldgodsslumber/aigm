@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260617a';
+const BUILD = '20260618c';
 
 const Modal = (function () {
   let root = null;
@@ -46,8 +46,20 @@ const Router = (function () {
         }, pair[1]));
       });
     }
+    /* "Campaigns" deep-links to the last campaign you were in, so leaving for
+     * Settings and clicking it again drops you back where you were rather than
+     * at the list. (The ❧ brand logo still goes to the full list.) */
+    const campLink = global.querySelector('a[data-nav="campaigns"]');
+    if (campLink) {
+      const lastId = Store.lastCampaignId();
+      campLink.setAttribute('href', lastId ? '#/play/' + lastId : '#/campaigns');
+    }
+    const inCampaign = ['play', 'wiki', 'journal'].indexOf(route.view) >= 0;
     global.querySelectorAll('a').forEach(function (a) {
-      a.classList.toggle('on', a.getAttribute('href') === '#/' + route.view);
+      const on = a.getAttribute('data-nav') === 'campaigns'
+        ? (route.view === 'campaigns' || inCampaign)
+        : a.getAttribute('href') === '#/' + route.view;
+      a.classList.toggle('on', on);
     });
   }
 
