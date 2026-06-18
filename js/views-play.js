@@ -561,12 +561,33 @@ Views.play = async function (root, cid) {
   }
 
   /* ---------- rendering ---------- */
+  /* Read a pinned wiki entry aloud — name then public body only (never the
+   * GM-only secret). In drive mode this is how the player re-checks a face they
+   * can't keep straight (e.g. six Columbo suspects) without taking eyes off the
+   * road. Toggles: tapping the speaking chip stops it. */
+  function speakEntry(e) {
+    if (Speech.speaking()) { Speech.stop(); return; }
+    const body = String(e.body || '').trim();
+    const txt = body ? e.name + '. ' + body : e.name;
+    const ok = Speech.speak(txt, {});
+    if (!ok) Toast('Text-to-speech isn\'t available in this browser.');
+  }
+
   function renderHeader() {
     sceneTitleEl.textContent = scene.title + (scene.status === 'active' ? '' : ' (closed)');
     pinsEl.innerHTML = '';
     (scene.pinnedEntryIds || []).forEach(async function (id) {
       const e = await Store.getWiki(cid, id);
-      if (e) pinsEl.append(h('a', { class: 'tag-chip pin', href: '#/wiki/' + cid, title: 'Pinned to scene' }, '📌 ' + e.name));
+      if (!e) return;
+      if (drive) {
+        /* tap to hear who they are — glanceable recap, no navigation away */
+        const chip = h('button', { type: 'button', class: 'tag-chip pin',
+          title: 'Tap to hear ' + e.name + '\'s details' }, '🔊 ' + e.name);
+        chip.addEventListener('click', function () { speakEntry(e); });
+        pinsEl.append(chip);
+      } else {
+        pinsEl.append(h('a', { class: 'tag-chip pin', href: '#/wiki/' + cid, title: 'Pinned to scene' }, '📌 ' + e.name));
+      }
     });
   }
 

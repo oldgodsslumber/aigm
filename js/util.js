@@ -426,8 +426,16 @@ var Listen = (function () {
     if (!Rec) return false;
     stop();
     opts = opts || {};
-    var s = { stopped: false, fatal: null, finalText: '', rec: null };
+    /* committed: final text from recognizer sessions that have already ended
+     * (we transparently restart after each silence timeout). finalText mirrors
+     * the best full transcript so far, for the onEnd callback. */
+    var s = { stopped: false, fatal: null, committed: '', finalText: '', rec: null };
     session = s;
+
+    function join(a, b) {
+      a = (a || '').trim(); b = (b || '').trim();
+      return a && b ? a + ' ' + b : a + b;
+    }
 
     function build() {
       var rec = new Rec();
@@ -435,14 +443,22 @@ var Listen = (function () {
       rec.interimResults = true;
       rec.continuous = true;
       rec.maxAlternatives = 1;
+      /* Recompute THIS session's transcript from the full results list on every
+       * event instead of incrementally appending. Android Chrome re-fires final
+       * results (and its resultIndex is unreliable), so an incremental "+=" would
+       * duplicate phrases — "go this way" written twice. Recomputing is idempotent:
+       * re-reported results just yield the same string. */
+      var sessionFinal = '';
       rec.onresult = function (ev) {
-        var interim = '';
-        for (var i = ev.resultIndex; i < ev.results.length; i++) {
+        var fin = '', interim = '';
+        for (var i = 0; i < ev.results.length; i++) {
           var r = ev.results[i];
-          if (r.isFinal) s.finalText += r[0].transcript;
+          if (r.isFinal) fin += r[0].transcript;
           else interim += r[0].transcript;
         }
-        if (opts.onText) opts.onText((s.finalText + interim).trim(), false);
+        sessionFinal = fin;
+        s.finalText = join(s.committed, sessionFinal);
+        if (opts.onText) opts.onText(join(s.finalText, interim), false);
       };
       rec.onerror = function (ev) {
         var err = ev.error || 'error';
@@ -452,6 +468,10 @@ var Listen = (function () {
       };
       rec.onend = function () {
         if (session !== s) return;                 // superseded by a newer start/stop
+        /* fold this session's final transcript into the committed total once,
+         * here — not per-event — so a restart never re-counts what it heard. */
+        s.committed = join(s.committed, sessionFinal);
+        s.finalText = s.committed;
         if (s.stopped || s.fatal) {
           session = null;
           if (opts.onText && s.finalText.trim()) opts.onText(s.finalText.trim(), true);
