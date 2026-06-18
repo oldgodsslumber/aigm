@@ -235,7 +235,17 @@ var Speech = (function () {
       })
     }).then(function (res) {
       if (current !== session) return null;           // superseded by a newer speak/stop
-      if (!res.ok) throw new Error('ElevenLabs ' + res.status);
+      if (!res.ok) {
+        /* Surface ElevenLabs' own error detail. 402 = out of credits / quota;
+         * 401 = bad or disabled key. The body is JSON like {detail:{message}}. */
+        return res.text().then(function (body) {
+          var msg = '';
+          try { var j = JSON.parse(body); msg = (j.detail && (j.detail.message || j.detail.status)) || j.detail || ''; } catch (e) {}
+          if (res.status === 402 && !msg) msg = 'out of credits / quota exceeded';
+          if (res.status === 401 && !msg) msg = 'API key rejected';
+          throw new Error('HTTP ' + res.status + (msg ? ' — ' + msg : ''));
+        });
+      }
       return res.blob();
     }).then(function (blob) {
       if (!blob || current !== session) return;
@@ -246,7 +256,7 @@ var Speech = (function () {
       a.play().catch(done);
     }).catch(function (e) {
       done();
-      if (typeof Toast === 'function') Toast('ElevenLabs read-aloud failed (' + (e && e.message || 'error') + ').');
+      if (typeof Toast === 'function') Toast('ElevenLabs read-aloud failed: ' + (e && e.message || 'error') + '.');
     });
     return true;
   }
