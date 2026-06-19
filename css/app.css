@@ -25,9 +25,18 @@
  * pinch-zoom still works; this app never wants a zoom-in on a double tap. */
 html, body { touch-action: manipulation; }
 html { height: 100%; }
-/* min-height (not height) so the body grows with its content — otherwise it's
- * capped at one viewport and the sticky topbar detaches once you scroll past. */
-body { min-height: 100%; }
+/* App shell: pin the body to the *visible* viewport (dvh tracks the mobile
+ * address bar show/hide; vh is the desktop fallback) and never let the body
+ * itself scroll. The topbar and any per-view footer (e.g. the play composer)
+ * stay put; only <main> scrolls. This is what keeps the top menu frozen and
+ * the chat box on the bottom instead of riding off-screen on mobile. */
+body {
+  height: 100vh;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
 body {
   margin: 0;
   background: var(--bg0);
@@ -63,8 +72,7 @@ textarea { resize: vertical; }
   padding: 0 20px;
   background: var(--bg1);
   border-bottom: 1px solid var(--line-soft);
-  position: sticky;
-  top: 0;
+  flex: 0 0 auto;   /* never shrink — it's the frozen top menu */
   z-index: 20;
 }
 .brand {
@@ -87,7 +95,10 @@ textarea { resize: vertical; }
 .nav-link:hover { color: var(--ink); text-decoration: none; background: var(--bg2); }
 .nav-link.on { color: var(--ink); background: var(--bg3); }
 
-main { min-height: calc(100vh - 52px); }
+/* The only scroll container. Fills the space under the frozen topbar; long
+ * pages (campaigns, settings, wiki) scroll here, the topbar stays put. The
+ * play view fills this exactly (height:100%) so its chat-log scrolls instead. */
+main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
 /* ---------- buttons ---------- */
 .btn {
@@ -249,7 +260,10 @@ main { min-height: calc(100vh - 52px); }
 #toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---------- play view ---------- */
-.play { display: flex; flex-direction: column; height: calc(100vh - 52px); }
+/* Fill <main> exactly so the composer pins to the bottom and the chat-log is
+ * the only thing that scrolls — no dependence on 100vh (which over-measures on
+ * mobile and pushes the input below the fold). */
+.play { display: flex; flex-direction: column; height: 100%; }
 .scene-bar {
   display: flex;
   align-items: center;
