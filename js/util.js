@@ -78,24 +78,56 @@ var Speech = (function () {
     synth.onvoiceschanged = function () { try { synth.getVoices(); } catch (e) {} emitReady(); };
   }
 
-  /* Autoplay unlock. Browsers block speechSynthesis.speak() that isn't tied to a
-   * recent user gesture — which kills drive-mode auto-read, since it fires after
-   * the (async) GM reply lands, long past the tap that started the turn. Speaking
-   * a single silent utterance from within a real gesture unlocks speech for the
-   * rest of the page session, so later programmatic reads are allowed. We hook
-   * the first pointer/key/touch event anywhere and prime once. */
-  var unlocked = false;
-  function prime() {
-    if (!synth || unlocked) return;
+  /* Autoplay unlock (BOTH speechSynthesis AND the cloud-TTS <audio> element).
+   * Browsers block speech/audio playback that isn't tied to a recent user
+   * gesture. For device speech this kills drive-mode auto-read (it fires after
+   * the async GM reply, long past the tap that started the turn). For cloud TTS
+   * (ElevenLabs / AllTalk) it's worse: the audio plays only AFTER an async
+   * fetch, so even a manual 🔊 tap is "too late" on iOS — the request still
+   * spends credits, but play() is rejected and nothing is heard.
+   *
+   * Fix: on the first real gesture anywhere, (a) speak a silent utterance to
+   * unlock synthesis, and (b) play a silent clip through ONE reusable <audio>
+   * element to unlock it. We then route every cloud read through that same
+   * unlocked element, so async play() is allowed for the rest of the session. */
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
+  var sharedAudio = null;
+  var audioUnlocked = false;
+  var synthUnlocked = false;
+
+  function ensureAudioEl() {
+    if (!sharedAudio && typeof Audio !== 'undefined') {
+      sharedAudio = new Audio();
+      sharedAudio.preload = 'auto';
+    }
+    return sharedAudio;
+  }
+  function primeAudio() {
+    if (audioUnlocked) return;
+    var a = ensureAudioEl();
+    if (!a) return;
     try {
-      var u = new SpeechSynthesisUtterance(' ');
-      u.volume = 0;
-      synth.speak(u);
-      synth.resume();
-      unlocked = true;
+      a.src = SILENT_WAV;
+      var p = a.play();
+      /* stop the silent clip once it's unlocked — but never yank a real read
+       * that may have started on the same element in the same gesture window. */
+      if (p && p.then) p.then(function () { if (!audioEl) { try { a.pause(); a.currentTime = 0; } catch (e) {} } }).catch(function () {});
+      audioUnlocked = true;   // the element is now user-activated; later async play() is allowed
     } catch (e) { /* ignore */ }
   }
-  if (synth && typeof document !== 'undefined') {
+  function prime() {
+    if (synth && !synthUnlocked) {
+      try {
+        var u = new SpeechSynthesisUtterance(' ');
+        u.volume = 0;
+        synth.speak(u);
+        synth.resume();
+        synthUnlocked = true;
+      } catch (e) { /* ignore */ }
+    }
+    primeAudio();
+  }
+  if (typeof document !== 'undefined') {
     var primeOnce = function () {
       prime();
       document.removeEventListener('pointerdown', primeOnce, true);
@@ -187,13 +219,35 @@ var Speech = (function () {
   /* Chrome stops feeding audio after ~15s of synthesis (a long-standing bug);
    * a periodic resume() keeps a multi-sentence read going to the end. */
   var keepAlive = null;
-  var audioEl = null;            // active ElevenLabs <audio>, if any
+  var audioEl = null;            // the shared <audio> while a cloud read is active
   function stopAudio() {
-    if (!audioEl) return;
     var a = audioEl; audioEl = null;
+    if (!a) return;
     try { a.pause(); } catch (e) {}
     a.onended = a.onerror = null;
-    if (a.src && a.src.indexOf('blob:') === 0) { try { URL.revokeObjectURL(a.src); } catch (e) {} }
+    if (a._blobUrl) { try { URL.revokeObjectURL(a._blobUrl); } catch (e) {} a._blobUrl = null; }
+  }
+
+  /* Play a source URL through the pre-unlocked shared element so async playback
+   * is allowed on iOS. isBlob => we own the object URL and revoke it when the
+   * read ends or is superseded. A rejected play() is surfaced (not swallowed),
+   * since a silent failure here is exactly what wasted the user's credits. */
+  function playThroughShared(src, rate, done, isBlob) {
+    var a = ensureAudioEl();
+    if (!a) { done(); return; }
+    if (a._blobUrl) { try { URL.revokeObjectURL(a._blobUrl); } catch (e) {} }
+    a._blobUrl = isBlob ? src : null;
+    a.onended = done;
+    a.onerror = function () { done(); };
+    a.src = src;
+    try { a.currentTime = 0; } catch (e) {}
+    a.playbackRate = rate;
+    audioEl = a;
+    var p = a.play();
+    if (p && p.catch) p.catch(function () {
+      done();
+      if (typeof Toast === 'function') Toast('Read-aloud was blocked by the browser. Tap anywhere once, then press 🔊 again.');
+    });
   }
   function startKeepAlive() {
     stopKeepAlive();
@@ -260,11 +314,7 @@ var Speech = (function () {
       return res.blob();
     }).then(function (blob) {
       if (!blob || current !== session) return;
-      var a = new Audio(URL.createObjectURL(blob));
-      a.playbackRate = rate;                           // reuse the device speed slider
-      audioEl = a;
-      a.onended = done; a.onerror = done;
-      a.play().catch(done);
+      playThroughShared(URL.createObjectURL(blob), rate, done, true);  // shared el => iOS allows async play
     }).catch(function (e) {
       done();
       if (typeof Toast === 'function') Toast('ElevenLabs read-aloud failed: ' + (e && e.message || 'error') + '.');
@@ -319,11 +369,7 @@ var Speech = (function () {
       var url = j.output_file_url || j.output_cache_url || '';
       if (/^\//.test(url)) url = base + url;          // AllTalk v2 returns a relative path
       if (!url) throw new Error('no audio URL returned');
-      var a = new Audio(url);
-      a.playbackRate = rate;
-      audioEl = a;
-      a.onended = done; a.onerror = done;
-      a.play().catch(done);
+      playThroughShared(url, rate, done, false);
     }).catch(function (e) {
       done();
       if (typeof Toast === 'function') Toast('AllTalk read-aloud failed: ' + (e && e.message || 'error') + '. Is the AllTalk server running?');
