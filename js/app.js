@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260618g';
+const BUILD = '20260619a';
 
 const Modal = (function () {
   let root = null;
@@ -31,7 +31,7 @@ const Router = (function () {
   function parse() {
     const hash = location.hash.replace(/^#\/?/, '') || 'campaigns';
     const parts = hash.split('/');
-    return { view: parts[0], id: parts[1] || null };
+    return { view: parts[0], id: parts[1] || null, sub: parts[2] || null };
   }
 
   function renderNav(route) {
@@ -69,7 +69,7 @@ const Router = (function () {
     renderNav(route);
     try {
       if (route.view === 'play' && route.id) await Views.play(root, route.id);
-      else if (route.view === 'wiki' && route.id) await Views.wiki(root, route.id);
+      else if (route.view === 'wiki' && route.id) await Views.wiki(root, route.id, route.sub);
       else if (route.view === 'journal' && route.id) await Views.journal(root, route.id);
       else if (route.view === 'characters') await Views.characters(root);
       else if (route.view === 'new') await Views.campaigns(root, route.id); /* start a new story, optionally with a preset character */

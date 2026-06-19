@@ -1,10 +1,24 @@
 /* AI GM — Wiki view: browse, search, edit, merge, pin. */
 window.Views = window.Views || {};
 
-Views.wiki = async function (root, cid) {
+Views.wiki = async function (root, cid, openId) {
   root.dataset.screenLabel = 'Wiki View';
   const campaign = await Store.getCampaign(cid);
   let entries = await Store.listWiki(cid);
+  /* current scene drives the "pin to scene" toggle on each card */
+  let curScene = campaign.currentSceneId ? await Store.getScene(cid, campaign.currentSceneId) : null;
+  function isPinned(id) { return !!(curScene && (curScene.pinnedEntryIds || []).indexOf(id) >= 0); }
+  async function togglePin(entry) {
+    if (!curScene) { Toast('No active scene — open Play first to start one, then pin cast to it.'); return; }
+    const sc = await Store.getScene(cid, curScene.id);
+    sc.pinnedEntryIds = sc.pinnedEntryIds || [];
+    const i = sc.pinnedEntryIds.indexOf(entry.id);
+    if (i >= 0) sc.pinnedEntryIds.splice(i, 1); else sc.pinnedEntryIds.push(entry.id);
+    await Store.saveScene(cid, sc);
+    curScene = sc;
+    Toast(i >= 0 ? 'Unpinned from the scene.' : 'Pinned — “' + entry.name + '” now rides along in the GM\'s context.');
+    renderList();
+  }
   const TYPES = ['pc', 'npc', 'location', 'faction', 'item', 'event', 'plan'];
   let typeFilter = '', query = '', showHidden = false;
 
@@ -430,13 +444,26 @@ Views.wiki = async function (root, cid) {
           ? h('p', { class: 'wiki-secret-preview' }, '🔒 ' + e.secret.trim().slice(0, 160) + (e.secret.trim().length > 160 ? '…' : '')) : null,
         (e.tags && e.tags.length) ? h('p', { class: 'card-meta' }, '# ' + e.tags.join('  # ')) : null);
       card.addEventListener('click', function () { openEditor(e); });
-      listEl.append(card);
+      /* pin/unpin straight from the card — no need to open the editor first.
+       * Sibling (not nested) button so the card <button> stays valid HTML. */
+      const pinned = isPinned(e.id);
+      const pinBtn = h('button', {
+        class: 'wiki-pin-btn' + (pinned ? ' on' : ''), type: 'button',
+        title: curScene
+          ? (pinned ? 'Unpin from the current scene' : 'Pin to the current scene')
+          : 'Start a scene in Play to pin cast'
+      }, pinned ? '📌' : '📍');
+      pinBtn.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        togglePin(e);
+      });
+      listEl.append(h('div', { class: 'wiki-card-wrap' }, card, pinBtn));
     });
   }
 
   async function openEditor(e) {
-    const scene = campaign.currentSceneId ? await Store.getScene(cid, campaign.currentSceneId) : null;
-    const pinned = scene && (scene.pinnedEntryIds || []).indexOf(e.id) >= 0;
+    const scene = curScene;
+    const pinned = isPinned(e.id);
 
     const typeSel = h('select', null, TYPES.map(function (t) { return h('option', { value: t }, t); }));
     typeSel.value = e.type || 'npc';
@@ -471,12 +498,7 @@ Views.wiki = async function (root, cid) {
     if (e.id && scene) {
       const pinBtn = h('button', { class: 'btn' }, pinned ? 'Unpin from scene' : 'Pin to current scene');
       pinBtn.addEventListener('click', async function () {
-        const sc = await Store.getScene(cid, scene.id);
-        sc.pinnedEntryIds = sc.pinnedEntryIds || [];
-        const i = sc.pinnedEntryIds.indexOf(e.id);
-        if (i >= 0) sc.pinnedEntryIds.splice(i, 1); else sc.pinnedEntryIds.push(e.id);
-        await Store.saveScene(cid, sc);
-        Toast(i >= 0 ? 'Unpinned.' : 'Pinned — this entry now rides along in the GM\'s context.');
+        await togglePin(e);
         Modal.close();
       });
       actions.append(pinBtn);
@@ -678,4 +700,11 @@ Views.wiki = async function (root, cid) {
   }
 
   renderList();
+
+  /* Deep link: #/wiki/<cid>/<entryId> opens that entry's editor directly
+   * (used by the pinned-cast chips in the Play view). */
+  if (openId) {
+    const target = entries.find(function (e) { return e.id === openId && !e.mergedInto; });
+    if (target) openEditor(target);
+  }
 };

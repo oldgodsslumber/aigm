@@ -696,7 +696,7 @@ Views.play = async function (root, cid) {
         chip.addEventListener('click', function () { speakEntry(e); });
         pinsEl.append(chip);
       } else {
-        pinsEl.append(h('a', { class: 'tag-chip pin', href: '#/wiki/' + cid, title: 'Pinned to scene' }, '📌 ' + e.name));
+        pinsEl.append(h('a', { class: 'tag-chip pin', href: '#/wiki/' + cid + '/' + e.id, title: 'Open ' + e.name + '\'s wiki entry' }, '📌 ' + e.name));
       }
     });
   }

@@ -21,6 +21,9 @@
 }
 
 * { box-sizing: border-box; }
+/* Kill the browser's double-tap-to-zoom gesture (and its 300ms tap delay).
+ * pinch-zoom still works; this app never wants a zoom-in on a double tap. */
+html, body { touch-action: manipulation; }
 html { height: 100%; }
 /* min-height (not height) so the body grows with its content — otherwise it's
  * capped at one viewport and the sticky topbar detaches once you scroll past. */
@@ -632,6 +635,25 @@ details.wiki-group[open] > summary::after { content: '▾ hide'; }
 }
 .wiki-card:hover { border-color: var(--accent); }
 .wiki-card h2 { font-size: 18px; }
+/* wrap lets the pin button float over the card without nesting a <button>
+ * inside the card <button> (invalid + click-bubbling headaches). */
+.wiki-card-wrap { position: relative; display: grid; }
+.wiki-pin-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: var(--bg0);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+  opacity: 0.55;
+  color: var(--dim);
+}
+.wiki-pin-btn:hover { opacity: 1; border-color: var(--accent); color: var(--ink); }
+.wiki-pin-btn.on { opacity: 1; color: var(--accent); border-color: var(--accent); background: var(--bg2); }
 .wiki-card-top { display: flex; justify-content: space-between; align-items: center; }
 .wiki-by { font-family: var(--mono); font-size: 11px; color: var(--faint); border: 1px solid var(--line); padding: 1px 7px; border-radius: 4px; }
 .wiki-body-preview { color: var(--dim); font-size: 14px; margin: 0; }
