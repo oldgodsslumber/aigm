@@ -8,6 +8,7 @@ Views.play = async function (root, cid) {
   let campaign, pc, scenes, scene, messages;
   let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0, lastGmId = null;
   let lastReadId = null, firstRender = true; /* drive-mode auto-read: only speak NEW replies, not history */
+  let lastTopId = null; /* reading mode: scroll to the TOP of each NEW reply, once, so it isn't spoiled */
   let pendingPlayer = null; /* { id, text } of a player move awaiting its first GM reply, so we can roll it back on error */
 
   async function loadAll() {
@@ -878,22 +879,43 @@ Views.play = async function (root, cid) {
       return;
     }
     let lastSceneId = null;
+    let newestGmEl = null;
     messages.forEach(function (m) {
       if (m.sceneId !== lastSceneId) {
         const sc = scenes.find(function (s) { return s.id === m.sceneId; });
         logEl.append(h('div', { class: 'scene-divider' }, h('span', null, (sc ? sc.title : 'Scene'))));
         lastSceneId = m.sceneId;
       }
-      logEl.append(renderMessage(m));
+      const el = renderMessage(m);
+      if (m.role === 'gm' && m.id === lastGmId) newestGmEl = el;
+      logEl.append(el);
     });
     if (busy) logEl.append(h('div', { class: 'msg msg-thinking' }, h('span', { class: 'thinking-dots' }, 'The GM considers'), ''));
-    logEl.scrollTop = logEl.scrollHeight;
+
+    /* Scroll behavior:
+     *  - drive mode (hands-free, auto-read aloud) or mid-generation: follow the
+     *    bottom so the newest text / "GM considers" stays in view.
+     *  - a NEW reply just settled (reading mode): jump to its TOP, once, so the
+     *    player reads from the start instead of landing on the ending and having
+     *    to scroll up — which spoils it.
+     *  - first open: bottom, i.e. the most recent state.
+     *  - anything else (an edit, the tail render of a chained lookup turn, a
+     *    re-render while the player is mid-read): leave the scroll untouched. */
+    if (drive || busy) {
+      logEl.scrollTop = logEl.scrollHeight;
+    } else if (!firstRender && lastGmId && lastGmId !== lastTopId && newestGmEl) {
+      lastTopId = lastGmId;
+      const offset = newestGmEl.getBoundingClientRect().top - logEl.getBoundingClientRect().top;
+      logEl.scrollTop = logEl.scrollTop + offset - 8; /* small breathing room above */
+    } else if (firstRender) {
+      logEl.scrollTop = logEl.scrollHeight;
+    }
 
     /* Drive mode: read each NEW GM reply aloud automatically. The first render
      * just sets the baseline so we don't replay the whole backlog on open.
      * (Browsers may block auto-play TTS without a recent gesture — the 🔊 Read
      * button is the manual fallback.) */
-    if (firstRender) { firstRender = false; lastReadId = lastGmId; }
+    if (firstRender) { firstRender = false; lastReadId = lastGmId; lastTopId = lastGmId; }
     else if (drive && !busy && lastGmId && lastGmId !== lastReadId) {
       lastReadId = lastGmId;
       readLatestGm(true);
