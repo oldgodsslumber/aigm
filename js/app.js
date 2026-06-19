@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260618c';
+const BUILD = '20260618d';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — read-aloud on GM replies + wiki dedupe', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — collapsible wiki notices + Gemma reply marker', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();

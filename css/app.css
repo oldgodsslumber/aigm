@@ -421,6 +421,42 @@ main { min-height: calc(100vh - 52px); }
 .notice-type { color: var(--faint); font-family: var(--mono); font-size: 12.5px; }
 .undone-tag { color: var(--faint); font-family: var(--mono); font-size: 12px; border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; }
 
+/* consolidated wiki notices — collapse a multi-entry turn into one line */
+details.wiki-group { display: block; }
+details.wiki-group > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+}
+details.wiki-group > summary::-webkit-details-marker { display: none; }
+details.wiki-group > summary::after {
+  content: '▸ show';
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+details.wiki-group[open] > summary::after { content: '▾ hide'; }
+.wiki-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin: 9px 0 1px;
+  padding-left: 22px;
+}
+.wiki-group-item { display: flex; align-items: baseline; gap: 8px; }
+.wiki-group-tag {
+  margin-left: auto;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 12px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
 /* ---------- roll widget ---------- */
 .roll-widget {
   background: var(--bg2);

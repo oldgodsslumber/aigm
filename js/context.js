@@ -84,7 +84,11 @@ const Context = (function () {
       '{"title": "<3-6 word scene title>", "summary": "<5-10 sentences: what happened, decisions made, consequences pending, NPC status>"}',
       '```',
       '',
-      'Honor established wiki facts and scene summaries as canon. Honor any player-provided rules notes and tone/boundaries below as hard constraints.'
+      'Honor established wiki facts and scene summaries as canon. Honor any player-provided rules notes and tone/boundaries below as hard constraints.',
+      '',
+      'REPLY MARKER — Before your reply you may think, plan, or take notes as much as you need. When you are ready to write the part the player will actually read, output this exact marker on its own line, then write your in-character narration (and any gm-* blocks) after it:',
+      '<<<REPLY>>>',
+      'Everything BEFORE the marker is private scratchpad and is discarded; everything AFTER it is shown to the player. Emit the marker exactly once, on every turn — including scene summaries. If you did no planning, simply begin your reply with the marker.'
     ]).join('\n');
   }
 

@@ -155,8 +155,24 @@ Views.play = async function (root, cid) {
    *     (keeping the prose after them) — never delete a prose line. */
   function stripScratchpad(text) {
     const raw = String(text || '');
-    const fences = raw.match(/```gm-[a-z]+[\s\S]*?```/g) || [];
-    const body = raw.replace(/```gm-[a-z]+[\s\S]*?```/g, '');
+
+    /* Preferred path: the model marked where its in-character reply begins (see
+     * the REPLY MARKER instruction in the system prompt). Everything before it
+     * is scratchpad. Cut on the LAST marker, in case the model echoed it while
+     * planning. Only the heuristic fallback below ever drops real prose. */
+    const markerRe = /<<<\s*REPLY\s*>>>/gi;
+    let lastEnd = -1, mk;
+    while ((mk = markerRe.exec(raw)) !== null) lastEnd = mk.index + mk[0].length;
+    if (lastEnd >= 0) {
+      const reply = raw.slice(lastEnd).replace(markerRe, '').trim();
+      if (reply) return reply;
+    }
+
+    /* Fallback: no usable marker — drop scratchpad heuristically. Strip any
+     * stray marker tokens first so they never leak into the kept text. */
+    const cleaned = raw.replace(markerRe, '');
+    const fences = cleaned.match(/```gm-[a-z]+[\s\S]*?```/g) || [];
+    const body = cleaned.replace(/```gm-[a-z]+[\s\S]*?```/g, '');
     const lines = body.split(/\r?\n/);
     const reattach = function (s) {
       let out = s.trim();
@@ -183,7 +199,7 @@ Views.play = async function (root, cid) {
       if (m) return m[1] ? m[1] : null;
       return ln;
     }).filter(function (ln) { return ln !== null; }).join('\n').replace(/\n{3,}/g, '\n\n');
-    return reattach(kept.length ? kept : raw);
+    return reattach(kept.length ? kept : cleaned);
   }
 
   function setBusy(b) {
@@ -453,7 +469,11 @@ Views.play = async function (root, cid) {
        * reply, with the real narration last. Strip that for those models, but
        * keep the raw reply on the message so nothing is ever truly lost. */
       const isGemma = /^gemma/i.test(res.model || '');
-      const replyText = isGemma ? stripScratchpad(res.text) : res.text;
+      /* Gemma dumps its scratchpad, so cut it at the reply marker (or heuristics).
+       * Stronger models keep their thinking out of the output, but may still echo
+       * the marker — strip it so it never reaches the player. */
+      const replyText = (isGemma ? stripScratchpad(res.text) : res.text)
+        .replace(/<<<\s*REPLY\s*>>>/gi, '').trim();
       if (isGemma) console.log('[AI GM] gemma reply cleaned ' + res.text.length + '→' + replyText.length + ' chars\nRAW:\n' + res.text);
       const parsed = Tags.parse(replyText);
       const msg = {
@@ -695,6 +715,36 @@ Views.play = async function (root, cid) {
       '\n\nClick for the full breakdown in Settings.';
   }
 
+  /* A wiki write is shown in the log unless it's a hidden or secret (GM-only)
+   * entry — those must leave no trace for the player. Mirrors renderBlock. */
+  function wikiNoticeVisible(msg, block, bi) {
+    const meta = (msg.blockMeta || {})[bi] || {};
+    return !(meta.hidden || block.data.hidden === true ||
+      (block.data.secret && String(block.data.secret).trim()));
+  }
+
+  /* Render a run of visible wiki notices. One stays a plain inline line; two or
+   * more collapse into a single expandable summary so a turn that touches many
+   * entries doesn't flood the log. */
+  function renderWikiGroup(msg, items) {
+    if (items.length === 1) return renderBlock(msg, items[0].block, items[0].bi);
+    const metaOf = function (it) { return (msg.blockMeta || {})[it.bi] || {}; };
+    const updated = items.filter(function (it) { return metaOf(it).updated; }).length;
+    const verb = updated === items.length ? 'updated' : (updated === 0 ? 'added' : 'changed');
+    const list = h('div', { class: 'wiki-group-list' },
+      items.map(function (it) {
+        return h('div', { class: 'wiki-group-item' },
+          h('a', { href: '#/wiki/' + cid }, it.block.data.name),
+          h('span', { class: 'notice-type' }, ' · ' + (it.block.data.type || '')),
+          h('span', { class: 'wiki-group-tag' }, metaOf(it).updated ? 'updated' : 'new'));
+      }));
+    return h('details', { class: 'inline-notice wiki-notice wiki-group' },
+      h('summary', { class: 'wiki-group-summary' },
+        h('span', { class: 'notice-icon' }, '✦'),
+        h('span', null, items.length + ' wiki entries ' + verb)),
+      list);
+  }
+
   function renderBlock(msg, block, bi) {
     const meta = (msg.blockMeta || {})[bi] || {};
     if (block.tag === 'gm-wiki') {
@@ -731,22 +781,40 @@ Views.play = async function (root, cid) {
       const parsed = Tags.parse(m.content);
       let bi = 0;
       let narration = '';
+      /* Buffer consecutive visible wiki notices so a turn that touches several
+       * entries collapses into one expandable line instead of crowding the log.
+       * Any other block (or a stretch of narration) flushes the run first, so
+       * notices stay in their original position relative to the prose. */
+      let pendingWiki = [];
+      const flushWiki = function () {
+        if (pendingWiki.length) el.append(renderWikiGroup(m, pendingWiki));
+        pendingWiki = [];
+      };
       parsed.segments.forEach(function (seg) {
         if (seg.type === 'text') {
+          flushWiki();
           const t = seg.text.trim();
           if (t) { el.append(h('div', { class: 'narration', html: md(t) })); narration += (narration ? '\n\n' : '') + t; }
         } else {
-          try {
-            el.append(renderBlock(m, seg.block, bi));
-          } catch (err) {
-            console.warn('[AI GM] block render failed:', seg.block && seg.block.tag, err);
-            el.append(h('div', { class: 'inline-notice' },
-              h('span', { class: 'notice-icon' }, '⚠'),
-              h('span', null, 'A “' + (seg.block && seg.block.tag || 'GM') + '” block could not be displayed (the GM sent something malformed). The story continues below.')));
+          const block = seg.block;
+          if (block && block.tag === 'gm-wiki') {
+            /* hidden/secret writes render nothing, and must not split a run */
+            if (wikiNoticeVisible(m, block, bi)) pendingWiki.push({ block: block, bi: bi });
+          } else {
+            flushWiki();
+            try {
+              el.append(renderBlock(m, block, bi));
+            } catch (err) {
+              console.warn('[AI GM] block render failed:', seg.block && seg.block.tag, err);
+              el.append(h('div', { class: 'inline-notice' },
+                h('span', { class: 'notice-icon' }, '⚠'),
+                h('span', null, 'A “' + (seg.block && seg.block.tag || 'GM') + '” block could not be displayed (the GM sent something malformed). The story continues below.')));
+            }
           }
           bi++;
         }
       });
+      flushWiki();
       const actions = h('div', { class: 'msg-actions' });
       if (narration.trim()) {
         const readBtn = h('button', { class: 'btn small ghost', title: 'Read this pass aloud' }, '🔊 Read');
