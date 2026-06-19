@@ -464,24 +464,25 @@ Views.play = async function (root, cid) {
         Toast(res.label + ' · ' + res.used + '/' + res.limit + ' today' +
           (turnRequests > 1 ? ' · request ' + turnRequests + ' this turn' : ''));
       }
-      /* Weak free models (Gemma) have no separate thinking channel and dump
-       * their scratchpad — echoed prompt, planning, self-checks — into the
-       * reply, with the real narration last. Strip that for those models, but
-       * keep the raw reply on the message so nothing is ever truly lost. */
+      /* Weak models (Gemma, and most local OpenAI-compatible endpoints) have no
+       * separate thinking channel and dump their scratchpad — echoed prompt,
+       * planning, self-checks — into the reply, with the real narration last.
+       * Cut that at the reply marker (or heuristics) for those backends, but keep
+       * the raw reply on the message so nothing is ever truly lost. Gemini-class
+       * models keep thinking out of the output, but may still echo the marker —
+       * strip the bare token from every reply so it never reaches the player. */
       const isGemma = /^gemma/i.test(res.model || '');
-      /* Gemma dumps its scratchpad, so cut it at the reply marker (or heuristics).
-       * Stronger models keep their thinking out of the output, but may still echo
-       * the marker — strip it so it never reaches the player. */
-      const replyText = (isGemma ? stripScratchpad(res.text) : res.text)
+      const dumpsScratchpad = isGemma || settings.backend === 'local';
+      const replyText = (dumpsScratchpad ? stripScratchpad(res.text) : res.text)
         .replace(/<<<\s*REPLY\s*>>>/gi, '').trim();
-      if (isGemma) console.log('[AI GM] gemma reply cleaned ' + res.text.length + '→' + replyText.length + ' chars\nRAW:\n' + res.text);
+      if (dumpsScratchpad) console.log('[AI GM] reply cleaned ' + res.text.length + '→' + replyText.length + ' chars\nRAW:\n' + res.text);
       const parsed = Tags.parse(replyText);
       const msg = {
         role: 'gm', content: replyText, sceneId: scene.id,
         blocks: parsed.blocks.map(function (b) { return { tag: b.tag, data: b.data }; }),
         blockMeta: {}
       };
-      if (isGemma && replyText !== res.text) msg.raw = res.text;
+      if (dumpsScratchpad && replyText !== res.text) msg.raw = res.text;
       await Store.addMessage(cid, msg);
       pendingPlayer = null; /* a GM reply now exists — the player's move was consumed */
       messages = await Store.listMessages(cid);
