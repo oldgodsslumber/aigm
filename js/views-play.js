@@ -793,9 +793,10 @@ Views.play = async function (root, cid) {
       };
       parsed.segments.forEach(function (seg) {
         if (seg.type === 'text') {
-          flushWiki();
           const t = seg.text.trim();
-          if (t) { el.append(h('div', { class: 'narration', html: md(t) })); narration += (narration ? '\n\n' : '') + t; }
+          /* Only real prose flushes the run — the whitespace between two fenced
+           * blocks must NOT, or consecutive wiki writes never group. */
+          if (t) { flushWiki(); el.append(h('div', { class: 'narration', html: md(t) })); narration += (narration ? '\n\n' : '') + t; }
         } else {
           const block = seg.block;
           if (block && block.tag === 'gm-wiki') {

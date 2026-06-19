@@ -13,6 +13,20 @@
  *    can remind the player how many requests they've spent today. */
 const LLM = (function () {
 
+  /* Weak models (Gemma, most local endpoints) forget the REPLY MARKER rule by
+   * the time they generate — it's buried near the top of a long prompt. Repeat
+   * it as the LAST thing they see, right before the reply, so they actually
+   * emit the marker and views-play can cut their scratchpad cleanly. */
+  const REPLY_REMINDER = 'REMINDER — Before your reply you may think or plan, but you MUST write the marker <<<REPLY>>> on its own line, then put your in-character narration (and any gm-* blocks) after it. Everything before the marker is discarded. Do this on EVERY turn.';
+
+  /* Append the reminder to the last user turn (Gemini "contents" shape: parts). */
+  function remindGemini(contents) {
+    for (let i = contents.length - 1; i >= 0; i--) {
+      if (contents[i].role === 'user') { contents[i].parts.push({ text: '\n\n' + REPLY_REMINDER }); return; }
+    }
+    contents.push({ role: 'user', parts: [{ text: REPLY_REMINDER }] });
+  }
+
   /* ---- Fallback chain for free-tier Gemini usage ----
    * Start at the top; when a model hits its daily limit or a 429, fall
    * through to the next. dailyLimit values are Google's free-tier numbers
@@ -301,6 +315,7 @@ const LLM = (function () {
         body.systemInstruction = { parts: [{ text: system }] };
       }
     }
+    if (isGemma) remindGemini(contents);
     if (!isGemma) body.safetySettings = SAFETY_OFF;
     /* Grounding with Google Search — Gemini 2.x only (Gemma can't ground). The
      * model retrieves live web results and folds the facts into its reply. */
@@ -386,11 +401,14 @@ const LLM = (function () {
   async function local(settings, system, messages, options) {
     options = options || {};
     const base = (settings.localUrl || 'http://localhost:5000/v1').replace(/\/+$/, '');
+    const convo = messages.map(function (m) { return { role: m.role, content: m.content }; });
+    /* Same marker reminder as Gemma — local endpoints are weak too (see above). */
+    for (let i = convo.length - 1; i >= 0; i--) {
+      if (convo[i].role === 'user') { convo[i].content += '\n\n' + REPLY_REMINDER; break; }
+    }
     const body = {
       model: settings.localModel || undefined,
-      messages: [{ role: 'system', content: system }].concat(messages.map(function (m) {
-        return { role: m.role, content: m.content };
-      })),
+      messages: [{ role: 'system', content: system }].concat(convo),
       temperature: (options.temperature != null ? options.temperature : settings.temperature),
       max_tokens: options.maxTokens || 1024
     };
