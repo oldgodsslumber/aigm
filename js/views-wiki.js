@@ -55,6 +55,12 @@ Views.wiki = async function (root, cid, openId) {
   const dedupeBtn = h('button', { class: 'btn', title: 'Scan the wiki for entries that are the same thing and merge them' }, '⧉ Find duplicates');
   dedupeBtn.addEventListener('click', runDedupe);
 
+  /* One-time repair tool (likely temporary): replay every past scene in order,
+   * re-extracting wiki entries from each transcript. Additive — only adds/updates,
+   * never deletes — so it backfills older games whose wikis were never filled in. */
+  const backfillBtn = h('button', { class: 'btn', title: 'One-time repair: replay each past scene in order and rebuild wiki entries from the transcript. Only adds and updates — never deletes.' }, '↻ Rebuild from scenes');
+  backfillBtn.addEventListener('click', openBackfillModal);
+
   /* ---- "Add world info": freeform notes filed into entries by the LLM ---- */
   const worldTa = h('textarea', { class: 'world-intake-input', rows: '4', placeholder: 'Paste or type anything about your world — characters, places, factions, history, items. This won’t start a scene or advance the story; it just gets filed into the wiki as entries.' });
   const intakeBtn = h('button', { class: 'btn accent' }, 'Add to wiki');
@@ -83,7 +89,7 @@ Views.wiki = async function (root, cid, openId) {
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Wiki', h('span', { class: 'head-sub' }, campaign.name)),
-      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, dedupeBtn, newBtn)),
+      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, dedupeBtn, backfillBtn, newBtn)),
     h('details', { class: 'wiki-intake', open: '' },
       h('summary', null, 'Add world info'),
       h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
@@ -159,7 +165,7 @@ Views.wiki = async function (root, cid, openId) {
       if (s.length > cap) s = s.slice(0, cap).trim() + '…';
       return s;
     };
-    const out = { type: type, name: name, aliases: toArr(o.aliases), tags: toArr(o.tags), body: cleanText(o.body, 2000) };
+    const out = { type: type, name: name, aliases: toArr(o.aliases), tags: toArr(o.tags), body: cleanText(o.body, 6000) };
     if (o.hidden === true || o.hidden === 'true') out.hidden = true;
     const secret = cleanText(o.secret, 2000);
     if (secret) out.secret = secret;
@@ -223,7 +229,17 @@ Views.wiki = async function (root, cid, openId) {
     if (found) {
       found.aliases = found.aliases || [];
       found.tags = found.tags || [];
-      found.body = data.body || found.body;
+      /* Preserve old facts: append new info instead of clobbering the body.
+       * Skip if the incoming text is already contained in (or fully contains)
+       * what's there, so repeat runs don't duplicate or shrink the entry. */
+      const oldBody = String(found.body || '').trim();
+      const newBody = String(data.body || '').trim();
+      if (newBody) {
+        if (!oldBody) found.body = newBody;
+        else if (newBody.indexOf(oldBody) >= 0) found.body = newBody;            // new is a superset
+        else if (oldBody.indexOf(newBody) < 0) found.body = oldBody + '\n\n' + newBody; // genuinely new — keep both
+        /* else: new is already contained in old — leave old untouched */
+      }
       found.type = data.type || found.type;
       if (data.hidden === true) found.hidden = true;
       if (data.secret && String(data.secret).trim()) found.secret = String(data.secret).trim();
@@ -258,7 +274,7 @@ Views.wiki = async function (root, cid, openId) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiIntakePrompt({ genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: text }], maxTokens: 8192, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] intake parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -301,7 +317,7 @@ Views.wiki = async function (root, cid, openId) {
     try {
       const existingNames = entries.filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; });
       const system = Context.wikiTopicPrompt({ topic: topic, grounded: grounded, genres: campaign.genres, setting: campaign.setting, existingNames: existingNames });
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: 'Generate the wiki entries for: ' + topic }], grounding: grounded, maxTokens: 8192, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] topic parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -386,7 +402,7 @@ Views.wiki = async function (root, cid, openId) {
       });
       const trigger = (isUpdate ? 'Update the hidden threat plan now.' : 'Create the hidden threat plan now.') +
         (threatText ? '\n\n' + threatText : '');
-      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.2 });
+      const res = await LLM.chat({ settings: settings, system: system, messages: [{ role: 'user', content: trigger }], maxTokens: 8192, thinking: false, jsonMode: true, temperature: 0.2 });
       const datas = parseWikiBlocks(res.text);
       console.log('[wiki] plan parsed ' + datas.length + ' entries from reply (' + (res.text || '').length + ' chars)', datas.length ? '' : res.text);
       let created = 0, updated = 0;
@@ -655,6 +671,108 @@ Views.wiki = async function (root, cid, openId) {
     } finally {
       dedupeBtn.disabled = false;
       dedupeBtn.textContent = origLabel;
+    }
+  }
+
+  /* ---------- One-time "Rebuild from scenes" backfill ---------- */
+
+  function openBackfillModal() {
+    const status = h('div', { class: 'card-sub', style: 'margin-top:.5rem' });
+    const bar = h('div', { class: 'card-sub', style: 'font-weight:600;margin-top:.5rem' });
+    const go = h('button', { class: 'btn accent' }, 'Start');
+    const closeBtn = h('button', { class: 'btn', onclick: Modal.close }, 'Cancel');
+    go.addEventListener('click', function () { runBackfill(go, closeBtn, status, bar); });
+    Modal.open(h('div', { class: 'modal-wide' },
+      h('h2', null, 'Rebuild wiki from scenes'),
+      h('p', { class: 'card-sub' }, 'Goes through your scenes in order, starting from the first, and re-extracts wiki entries from each scene’s transcript. It only ADDS and UPDATES entries — nothing is deleted and existing facts are kept (bodies are merged). Use this to repair older games whose wiki is thin. This can take a while and uses API calls; leave this open until it finishes.'),
+      bar, status,
+      h('div', { class: 'modal-actions' }, closeBtn, go)));
+  }
+
+  async function runBackfill(go, closeBtn, status, bar) {
+    const settings = Settings.forCampaign(campaign);
+    if (settings.backend === 'gemini' && !settings.geminiKey) {
+      Toast('No Gemini API key set — add yours in Settings.'); return;
+    }
+    const scenes = await Store.listScenes(cid);
+    if (!scenes.length) { status.textContent = 'No scenes to rebuild from.'; return; }
+    const messages = await Store.listMessages(cid);
+    const byScene = {};
+    messages.forEach(function (m) {
+      if (!m.sceneId) return;
+      (byScene[m.sceneId] = byScene[m.sceneId] || []).push(m);
+    });
+
+    go.disabled = true; closeBtn.disabled = true;
+    go.textContent = 'Rebuilding…';
+    const CHUNK = 12000; // chars of transcript per LLM call, to stay within context
+    let totalCreated = 0, totalUpdated = 0, processed = 0;
+    try {
+      for (let si = 0; si < scenes.length; si++) {
+        const sc = scenes[si];
+        const label = 'Scene ' + (si + 1) + ' of ' + scenes.length + (sc.title ? ' — ' + sc.title : '');
+        bar.textContent = label;
+        const lines = (byScene[sc.id] || [])
+          .filter(function (m) { return m.role === 'player' || m.role === 'gm' || m.role === 'info'; })
+          .map(function (m) {
+            const txt = String(m.content || '').trim();
+            if (!txt) return '';
+            if (m.role === 'player') return 'Player: ' + txt;
+            if (m.role === 'gm') return 'GM: ' + txt;
+            return txt; // scene-opening / info narration
+          }).filter(Boolean);
+        if (!lines.length) { status.textContent = label + ': empty, skipped.'; continue; }
+
+        /* pack lines into chunks under the char budget so nothing is dropped */
+        const chunks = []; let cur = '';
+        lines.forEach(function (ln) {
+          if (cur && (cur.length + ln.length + 2) > CHUNK) { chunks.push(cur); cur = ''; }
+          cur = cur ? cur + '\n\n' + ln : ln;
+        });
+        if (cur) chunks.push(cur);
+
+        for (let ci = 0; ci < chunks.length; ci++) {
+          status.textContent = label + (chunks.length > 1 ? '  (part ' + (ci + 1) + '/' + chunks.length + ')' : '') + ' — reading…';
+          const existingNames = (await Store.listWiki(cid))
+            .filter(function (e) { return !e.mergedInto; }).map(function (e) { return e.name; }).slice(0, 300);
+          const system = Context.wikiBackfillPrompt({
+            genres: campaign.genres, setting: campaign.setting,
+            existingNames: existingNames, sceneTitle: sc.title
+          });
+          let res;
+          try {
+            res = await LLM.chat({
+              settings: settings, system: system,
+              messages: [{ role: 'user', content: 'SCENE TRANSCRIPT:\n\n' + chunks[ci] }],
+              maxTokens: 8192, thinking: false, jsonMode: true, temperature: 0.2
+            });
+          } catch (e) {
+            console.warn('[wiki] backfill chunk failed:', e);
+            status.textContent = label + ' — error: ' + e.message + ' (continuing)';
+            continue;
+          }
+          const datas = parseWikiBlocks(res.text);
+          console.log('[wiki] backfill ' + label + ' part ' + (ci + 1) + ': ' + datas.length + ' entries');
+          for (const d of datas) {
+            const r = await upsertFromData(d);
+            if (!r) continue;
+            if (r.updated) totalUpdated++; else totalCreated++;
+          }
+        }
+        processed++;
+        entries = await Store.listWiki(cid);
+        renderList();
+        status.textContent = label + ' ✓  (' + totalCreated + ' added, ' + totalUpdated + ' updated so far)';
+      }
+      bar.textContent = 'Done — ' + processed + ' scene' + (processed === 1 ? '' : 's') + ' processed.';
+      status.textContent = totalCreated + ' entries added, ' + totalUpdated + ' updated. You can run “Find duplicates” next to tidy up.';
+      go.textContent = 'Done'; go.disabled = true;
+      closeBtn.disabled = false; closeBtn.textContent = 'Close';
+      Toast('Wiki rebuilt: ' + totalCreated + ' added, ' + totalUpdated + ' updated across ' + processed + ' scene' + (processed === 1 ? '' : 's') + '.');
+    } catch (e) {
+      console.error(e); Toast(e.message);
+      go.disabled = false; go.textContent = 'Start';
+      closeBtn.disabled = false;
     }
   }
 

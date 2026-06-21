@@ -36,8 +36,9 @@ const Context = (function () {
    * hidden/secret for the plan). */
   const JSON_ARRAY_INSTRUCTION =
     'Respond with ONLY a JSON array of entry objects. No prose, no commentary, no markdown, no code fences — nothing before or after the array. ' +
-    'Each object has exactly: {"type": "<one type from the list above>", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<2-5 sentences of durable facts>"}. ' +
-    'aliases and tags must be arrays (use [] if none). Example: [{"type":"npc","name":"Nick Fury","aliases":["Fury"],"tags":["S.H.I.E.L.D."],"body":"Director of S.H.I.E.L.D. ..."}]';
+    'Each object has exactly: {"type": "<one type from the list above>", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<the entry text>"}. ' +
+    'Write a THOROUGH, self-contained body for each entry — a substantial encyclopedia-style writeup, NOT a one-line blurb. Aim for at least one full paragraph (typically 5 to 10 sentences, more for major entities), covering what it is, its role and significance, history or background, key relationships and connections to other entries, notable traits or features, and its current status. Use "\\n\\n" between paragraphs for longer entries. Never reduce an entry to a single sentence. ' +
+    'aliases and tags must be arrays (use [] if none). Example: [{"type":"npc","name":"Nick Fury","aliases":["Fury"],"tags":["S.H.I.E.L.D."],"body":"Nick Fury is the longtime Director of S.H.I.E.L.D. ... (several sentences) ..."}]';
 
   /* Campaign format shapes the threat countdown's scale (used when designing a
    * plan) and the pacing the GM uses while advancing it during play. */
@@ -116,6 +117,41 @@ const Context = (function () {
     if (opts.existingNames && opts.existingNames.length) {
       lines = lines.concat(['',
         'These entries already exist — REUSE the exact same name when the notes refer to them so they update instead of duplicating:',
+        opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
+    }
+    return lines.join('\n');
+  }
+
+  /* System prompt for the Wiki tab's "Rebuild from scenes" backfill button.
+   * Given the raw transcript of ONE already-played scene, extract every entity
+   * established in it into wiki entries. Used to repair older games whose wikis
+   * were never populated (or populated thinly) during play. Additive: bodies
+   * are merged, not overwritten, so re-running across scenes accretes detail. */
+  function wikiBackfillPrompt(opts) {
+    opts = opts || {};
+    let lines = [
+      'You are a worldbuilding archivist reconstructing a tabletop RPG campaign\'s wiki from its play transcript. Below is the transcript of ONE scene that has already been played. This is NOT a live scene and does NOT advance any plot — do NOT narrate, do NOT continue the story, do NOT address the player, and do NOT add commentary.',
+      '',
+      'Your ONLY job is to extract the durable facts ESTABLISHED in this scene and file them into wiki entries. Be thorough: capture every named or distinctly described person, place, organization, significant item, and meaningful event that appears. Record only what the transcript actually establishes — do NOT invent details that are not present or implied. Keep distinct things in separate entries; never lump several entities into one.',
+      'Entry types to use:'
+    ].concat(WIKI_TYPE_GUIDE).concat([
+      '',
+      JSON_ARRAY_INSTRUCTION,
+      'These are facts the player knows from play; do NOT set "hidden" or "secret".'
+    ]);
+
+    if (opts.sceneTitle && String(opts.sceneTitle).trim()) {
+      lines = lines.concat(['', 'SCENE: ' + String(opts.sceneTitle).trim()]);
+    }
+
+    const world = [];
+    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
+    if (world.length) lines = lines.concat(['', 'World context (for tone and naming):', world.join('\n')]);
+
+    if (opts.existingNames && opts.existingNames.length) {
+      lines = lines.concat(['',
+        'These entries already exist — REUSE the exact same name when this scene refers to them so they update (and accrue new facts) instead of duplicating:',
         opts.existingNames.map(function (n) { return '- ' + n; }).join('\n')]);
     }
     return lines.join('\n');
@@ -405,5 +441,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiTopicPrompt: wikiTopicPrompt, wikiDedupePrompt: wikiDedupePrompt, planPrompt: planPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiBackfillPrompt: wikiBackfillPrompt, wikiTopicPrompt: wikiTopicPrompt, wikiDedupePrompt: wikiDedupePrompt, planPrompt: planPrompt, est: est };
 })();
