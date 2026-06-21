@@ -221,14 +221,26 @@ Views.wiki = async function (root, cid, openId) {
     const name = String(data.name || '').trim();
     if (!name) return null;
     const list = await Store.listWiki(cid);
+    /* Match on the incoming name OR any incoming alias, so a record carrying a
+     * now-known proper name plus the old handle as an alias updates the existing
+     * entry instead of duplicating it. */
+    const incoming = [name].concat(data.aliases || [])
+      .map(function (n) { return String(n || '').trim().toLowerCase(); }).filter(Boolean);
     const found = list.find(function (e) {
       if (e.mergedInto) return false;
-      const names = [e.name].concat(e.aliases || []).map(function (n) { return n.toLowerCase(); });
-      return names.indexOf(name.toLowerCase()) >= 0;
+      const names = [e.name].concat(e.aliases || []).map(function (n) { return String(n || '').toLowerCase(); });
+      return names.some(function (n) { return incoming.indexOf(n) >= 0; });
     });
     if (found) {
       found.aliases = found.aliases || [];
       found.tags = found.tags || [];
+      /* Promote a newly-learned proper name over a placeholder handle: retitle
+       * the entry in place and keep the old handle as an alias. */
+      if (name.toLowerCase() !== found.name.toLowerCase() &&
+          isDescriptiveHandle(found.name) && !isDescriptiveHandle(name)) {
+        if (found.aliases.indexOf(found.name) < 0) found.aliases.push(found.name);
+        found.name = name;
+      }
       /* Preserve old facts: append new info instead of clobbering the body.
        * Skip if the incoming text is already contained in (or fully contains)
        * what's there, so repeat runs don't duplicate or shrink the entry. */
@@ -822,9 +834,24 @@ Views.wiki = async function (root, cid, openId) {
           continue;
         }
         const fresh = parseWikiBlocks(res.text)[0];
-        const newBody = fresh && String(fresh.body || '').trim();
+        if (!fresh) continue;
+        let changed = false;
+        /* Promote a proper name the synthesis surfaced over a placeholder handle. */
+        const freshName = String(fresh.name || '').trim();
+        if (freshName && freshName.toLowerCase() !== entry.name.toLowerCase() &&
+            isDescriptiveHandle(entry.name) && !isDescriptiveHandle(freshName)) {
+          entry.aliases = entry.aliases || [];
+          if (entry.aliases.indexOf(entry.name) < 0) entry.aliases.push(entry.name);
+          entry.name = freshName;
+          changed = true;
+        }
+        /* Take the richer body only when it's genuinely longer — never shrink. */
+        const newBody = String(fresh.body || '').trim();
         if (newBody && newBody.length > String(entry.body || '').trim().length) {
           entry.body = newBody;
+          changed = true;
+        }
+        if (changed) {
           (fresh.aliases || []).forEach(function (a) {
             entry.aliases = entry.aliases || [];
             if (a && entry.aliases.indexOf(a) < 0 && a.toLowerCase() !== entry.name.toLowerCase()) entry.aliases.push(a);

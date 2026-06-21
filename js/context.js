@@ -17,8 +17,8 @@ const Context = (function () {
   /* Shared between the play protocol and the wiki-intake prompt so the two
    * can't drift. Per-type triggers are deliberately low-threshold. */
   const WIKI_TYPE_GUIDE = [
-    '- pc — the player character; keep a single entry with their current condition, injuries, inventory, resources, location, and key relationships.',
-    '- npc — EVERY named or distinctly described person, even a one-line bartender or a guard. Give nameless figures a descriptive handle (e.g. "the scarred dockmaster").',
+    '- pc — the player character; keep a single entry with their physical description/appearance, current condition, injuries, inventory, resources, location, and key relationships.',
+    '- npc — EVERY named or distinctly described person, even a one-line bartender or a guard. ALWAYS record their physical description/appearance (face, build, clothing, distinguishing features) in the body when the fiction gives it, plus their role, manner, and relationships. Give a still-nameless figure a descriptive handle (e.g. "the scarred dockmaster"); the MOMENT their proper name is revealed, set this entry\'s "name" to that proper name and move the old handle into "aliases" — never leave a named character titled by their handle, and never create a second entry for them.',
     '- location — every distinct place: a town, a tavern, a room, a road, a region.',
     '- faction — every organization, crew, family, cult, guild, or government.',
     '- item — every named, magical, plot-relevant, or otherwise significant object.',
@@ -37,8 +37,9 @@ const Context = (function () {
   const JSON_ARRAY_INSTRUCTION =
     'Respond with ONLY a JSON array of entry objects. No prose, no commentary, no markdown, no code fences — nothing before or after the array. ' +
     'Each object has exactly: {"type": "<one type from the list above>", "name": "<canonical name>", "aliases": ["<other names>"], "tags": ["<topic>"], "body": "<the entry text>"}. ' +
-    'Write a THOROUGH, self-contained body for each entry — a substantial encyclopedia-style writeup, NOT a one-line blurb. Aim for at least one full paragraph (typically 5 to 10 sentences, more for major entities), covering what it is, its role and significance, history or background, key relationships and connections to other entries, notable traits or features, and its current status. Use "\\n\\n" between paragraphs for longer entries. Never reduce an entry to a single sentence. ' +
-    'aliases and tags must be arrays (use [] if none). Example: [{"type":"npc","name":"Nick Fury","aliases":["Fury"],"tags":["S.H.I.E.L.D."],"body":"Nick Fury is the longtime Director of S.H.I.E.L.D. ... (several sentences) ..."}]';
+    'Write a THOROUGH, self-contained body for each entry — a substantial encyclopedia-style writeup, NOT a one-line blurb. Aim for at least one full paragraph (typically 5 to 10 sentences, more for major entities), covering what it is, its physical description/appearance (for a person: face, build, clothing, distinguishing features), its role and significance, history or background, key relationships and connections to other entries, notable traits or features, and its current status. Use "\\n\\n" between paragraphs for longer entries. Never reduce an entry to a single sentence. ' +
+    'For a person, the "name" must be their PROPER name if one is established anywhere in the material; record any descriptive handle (e.g. "the masked stranger") in "aliases", never as the name. ' +
+    'aliases and tags must be arrays (use [] if none). Example: [{"type":"npc","name":"Nick Fury","aliases":["Fury"],"tags":["S.H.I.E.L.D."],"body":"Nick Fury is the longtime Director of S.H.I.E.L.D. A weathered Black man with a shaved head and a black eyepatch over his left eye ... (several sentences) ..."}]';
 
   /* Campaign format shapes the threat countdown's scale (used when designing a
    * plan) and the pacing the GM uses while advancing it during play. */
@@ -65,7 +66,7 @@ const Context = (function () {
       '',
       'WIKI — this is your memory and the ONLY place game state is tracked, so record aggressively. The default is to CREATE an entry, not to skip one. The moment something is introduced or named in play — by you or the player — write it down in the SAME reply, before you move on. When in doubt, record it; a thin entry you flesh out later is far better than a forgotten detail. Emit as many gm-wiki blocks in one reply as there are things to capture (one block each). Record:'
     ].concat(WIKI_TYPE_GUIDE).concat([
-      'Then keep them current: when a fact changes, update the existing entry (same name) rather than creating a duplicate. Auto-creates an entry; updates if the name already exists:'
+      'Then keep them current: when a fact changes, update the EXISTING entry rather than creating a duplicate. To update an entry, emit a gm-wiki whose "name" or one of whose "aliases" matches a name the entry already has. When a figure first recorded under a descriptive handle is named, update that same entry by emitting its now-known proper name as "name" and the old handle in "aliases" — it will be retitled in place, not duplicated. Auto-creates an entry; updates if the name (or any alias) already exists:'
     ]).concat(WIKI_BLOCK_SPEC).concat([
       'Add "hidden": true to a gm-wiki block when an ENTIRE entry is a secret the player must NOT learn yet (a hidden enemy, a place they haven\'t discovered). You still use hidden entries to drive the world, but never reveal them outright — only through what happens in the fiction.',
       'To attach a secret to an entry that stays publicly known, add a "secret" field on a gm-wiki block with that entry\'s EXACT name (do NOT set "hidden"). The public "body" stays visible to the player; the "secret" text is GM-only — use it to plant a twist about a known person, place, or item without spoiling their public page. Example: {"name": "Mayor Crane", "secret": "She secretly leads the cult and ordered the disappearances."}',
@@ -169,8 +170,9 @@ const Context = (function () {
     const aka = (e.aliases && e.aliases.length) ? ' (also known as ' + e.aliases.join(', ') + ')' : '';
     let lines = [
       'You are a worldbuilding archivist polishing ONE wiki entry for a tabletop RPG campaign. You are given the facts gathered about this entry so far, plus the excerpts of the play transcript where it is mentioned across the whole campaign.',
-      'Rewrite all of it into a SINGLE, comprehensive, well-organized entry body. Consolidate repeated facts, resolve them into a flowing encyclopedia-style writeup, and KEEP every durable fact the material establishes — its role and significance, history, relationships, notable traits, and current status. Organize a longer entry into paragraphs (use "\\n\\n" between them).',
+      'Rewrite all of it into a SINGLE, comprehensive, well-organized entry body. Consolidate repeated facts, resolve them into a flowing encyclopedia-style writeup, and KEEP every durable fact the material establishes — its physical description/appearance (for a person: face, build, clothing, distinguishing features), role and significance, history, relationships, notable traits, and current status. Organize a longer entry into paragraphs (use "\\n\\n" between them).',
       'Record ONLY what the material actually establishes or clearly implies — do NOT invent new facts, events, names, or details, and do NOT pad with filler to reach a length. Do NOT narrate, continue the story, or address the player. Write in third person and present the entity as it stands by the end of the material.',
+      'NAME: if the material establishes a PROPER name for this entry (especially where it is currently titled by a descriptive handle), return that proper name as "name" and list the old handle and any other names in "aliases". Otherwise keep the given name.',
       'Make the body as full as the material genuinely supports: several paragraphs for a major, often-mentioned entity; a tight paragraph for a minor one.',
       '',
       'THE ENTRY: [' + (e.type || 'npc') + '] ' + (e.name || '') + aka
@@ -182,8 +184,8 @@ const Context = (function () {
     lines = lines.concat([
       '',
       'Respond with ONLY a single JSON object and nothing else — no prose, no commentary, no markdown, no code fences: ' +
-      '{"type": "<the type above>", "name": "<the exact name above>", "aliases": ["<other names>"], "tags": ["<topics>"], "body": "<the rewritten entry>"}. ' +
-      'aliases and tags must be arrays (use [] if none). Keep the same name and type.'
+      '{"type": "<the type above>", "name": "<proper name if known, else the name above>", "aliases": ["<other names / old handles>"], "tags": ["<topics>"], "body": "<the rewritten entry>"}. ' +
+      'aliases and tags must be arrays (use [] if none). Keep the same type.'
     ]);
     return lines.join('\n');
   }

@@ -49,6 +49,19 @@ function h(tag, attrs) {
   return el;
 }
 
+/* A descriptive handle ("the scarred dockmaster", "a hooded figure") rather
+ * than a proper name ("Garrick"). Used by the wiki upserts to decide when a
+ * newly-learned proper name should replace a placeholder handle as an entry's
+ * title (demoting the handle to an alias). Deliberately conservative: only
+ * article-led or lowercase-led strings count, so two proper names never flip. */
+function isDescriptiveHandle(s) {
+  s = String(s || '').trim();
+  if (!s) return false;
+  if (/^(the|a|an|some|that|this|those|these)\s/i.test(s)) return true; // "the masked stranger"
+  if (/^[a-z]/.test(s)) return true;                                     // lowercase start
+  return false;
+}
+
 /* Strip markdown + fenced blocks down to plain prose for text-to-speech */
 function stripMd(text) {
   return String(text || '')
