@@ -56,6 +56,14 @@ input, select, textarea {
   padding: 8px 10px;
   width: 100%;
 }
+/* Checkboxes/radios must NOT inherit the full-width text-field styling above,
+ * or they stretch across their flex row and crush the adjacent label text. */
+input[type="checkbox"], input[type="radio"] {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0;
+  margin: 0;
+}
 input:focus, select:focus, textarea:focus {
   outline: 1px solid var(--accent);
   outline-offset: 0;
@@ -206,6 +214,11 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .form-row > span { font-size: 13px; color: var(--dim); letter-spacing: 0.04em; text-transform: uppercase; font-family: var(--mono); }
 .form-grid { display: grid; grid-template-columns: 1fr 2fr; gap: 0 14px; }
 .inline-pair { display: flex; gap: 8px; align-items: center; }
+.inline-pair > span { flex: 1; min-width: 0; }
+/* "Hide the whole entry" row: a checkbox beside a paragraph of explanation.
+ * Top-align so the box sits with the first line as the text wraps normally. */
+.hidden-row { align-items: flex-start; }
+.hidden-row input[type="checkbox"] { width: 18px; height: 18px; margin-top: 1px; }
 .range-val { font-family: var(--mono); color: var(--dim); min-width: 38px; }
 .sf-hint { font-size: 12.5px; color: var(--faint); }
 
