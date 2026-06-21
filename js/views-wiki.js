@@ -676,6 +676,33 @@ Views.wiki = async function (root, cid, openId) {
 
   /* ---------- One-time "Rebuild from scenes" backfill ---------- */
 
+  /* Gather the transcript lines (across every scene) that mention an entry by
+   * name or alias, capped to a char budget — the raw material the synthesis
+   * pass rewrites into a rich body. Aliases under 3 chars are skipped to avoid
+   * matching stray substrings. */
+  function mentionsOf(entry, msgs, cap) {
+    const needles = [entry.name].concat(entry.aliases || [])
+      .map(function (n) { return String(n || '').toLowerCase().trim(); })
+      .filter(function (n) { return n.length > 2; });
+    if (!needles.length) return '';
+    const picked = [];
+    let used = 0;
+    for (let i = 0; i < msgs.length && used < cap; i++) {
+      const m = msgs[i];
+      if (m.role !== 'player' && m.role !== 'gm' && m.role !== 'info') continue;
+      const txt = String(m.content || '').trim();
+      if (!txt) continue;
+      const low = txt.toLowerCase();
+      if (!needles.some(function (n) { return low.indexOf(n) >= 0; })) continue;
+      const line = (m.role === 'player' ? 'Player: ' : (m.role === 'gm' ? 'GM: ' : '')) + txt;
+      picked.push(line);
+      used += line.length + 2;
+    }
+    let out = picked.join('\n\n');
+    if (out.length > cap) out = out.slice(0, cap);
+    return out;
+  }
+
   function openBackfillModal() {
     const status = h('div', { class: 'card-sub', style: 'margin-top:.5rem' });
     const bar = h('div', { class: 'card-sub', style: 'font-weight:600;margin-top:.5rem' });
@@ -684,7 +711,7 @@ Views.wiki = async function (root, cid, openId) {
     go.addEventListener('click', function () { runBackfill(go, closeBtn, status, bar); });
     Modal.open(h('div', { class: 'modal-wide' },
       h('h2', null, 'Rebuild wiki from scenes'),
-      h('p', { class: 'card-sub' }, 'Goes through your scenes in order, starting from the first, and re-extracts wiki entries from each scene’s transcript. It only ADDS and UPDATES entries — nothing is deleted and existing facts are kept (bodies are merged). Use this to repair older games whose wiki is thin. This can take a while and uses API calls; leave this open until it finishes.'),
+      h('p', { class: 'card-sub' }, 'Two passes: first it re-extracts entries from each scene’s transcript (adds and updates only — nothing is deleted), then it rewrites each player-facing entry into one richer, consolidated body using every scene it appears in. Entries only ever grow, never shrink. Use this to repair older games whose wiki is thin. This makes one API call per scene plus one per entry, so it can take a while — leave this open until it finishes.'),
       bar, status,
       h('div', { class: 'modal-actions' }, closeBtn, go)));
   }
@@ -764,11 +791,60 @@ Views.wiki = async function (root, cid, openId) {
         renderList();
         status.textContent = label + ' ✓  (' + totalCreated + ' added, ' + totalUpdated + ' updated so far)';
       }
+
+      /* Phase 2 — synthesis. Per-scene extraction only yields thin, scene-local
+       * bodies; a recurring entity's full picture is scattered across scenes.
+       * For each player-facing entry, gather every transcript excerpt that
+       * mentions it and rewrite the lot into one comprehensive body. Replace
+       * only when the result is genuinely longer, so this can never shrink an
+       * entry. Hidden / plan / secret-only entries are left untouched. */
+      const toSynth = (await Store.listWiki(cid)).filter(function (e) {
+        return !e.mergedInto && !e.hidden && e.type !== 'plan' && String(e.body || '').trim();
+      });
+      let synthed = 0;
+      for (let ei = 0; ei < toSynth.length; ei++) {
+        const entry = toSynth[ei];
+        bar.textContent = 'Synthesizing entries — ' + (ei + 1) + ' of ' + toSynth.length;
+        status.textContent = 'Rewriting “' + entry.name + '” from every scene it appears in…';
+        const support = mentionsOf(entry, messages, 9000);
+        const system = Context.wikiSynthesisPrompt({ entry: entry, genres: campaign.genres, setting: campaign.setting });
+        const user = 'FACTS GATHERED SO FAR (the current entry body):\n' + (String(entry.body || '').trim() || '(none)') +
+          '\n\nTRANSCRIPT EXCERPTS WHERE IT IS MENTIONED:\n' + (support || '(none beyond the above)');
+        let res;
+        try {
+          res = await LLM.chat({
+            settings: settings, system: system,
+            messages: [{ role: 'user', content: user }],
+            maxTokens: 4096, thinking: false, jsonMode: true, temperature: 0.3
+          });
+        } catch (e) {
+          console.warn('[wiki] synthesis failed for', entry.name, e);
+          continue;
+        }
+        const fresh = parseWikiBlocks(res.text)[0];
+        const newBody = fresh && String(fresh.body || '').trim();
+        if (newBody && newBody.length > String(entry.body || '').trim().length) {
+          entry.body = newBody;
+          (fresh.aliases || []).forEach(function (a) {
+            entry.aliases = entry.aliases || [];
+            if (a && entry.aliases.indexOf(a) < 0 && a.toLowerCase() !== entry.name.toLowerCase()) entry.aliases.push(a);
+          });
+          (fresh.tags || []).forEach(function (t) {
+            entry.tags = entry.tags || [];
+            if (t && entry.tags.indexOf(t) < 0) entry.tags.push(t);
+          });
+          await Store.saveWiki(cid, entry);
+          synthed++;
+          entries = await Store.listWiki(cid);
+          renderList();
+        }
+      }
+
       bar.textContent = 'Done — ' + processed + ' scene' + (processed === 1 ? '' : 's') + ' processed.';
-      status.textContent = totalCreated + ' entries added, ' + totalUpdated + ' updated. You can run “Find duplicates” next to tidy up.';
+      status.textContent = totalCreated + ' added, ' + totalUpdated + ' updated, ' + synthed + ' rewritten richer. You can run “Find duplicates” next to tidy up.';
       go.textContent = 'Done'; go.disabled = true;
       closeBtn.disabled = false; closeBtn.textContent = 'Close';
-      Toast('Wiki rebuilt: ' + totalCreated + ' added, ' + totalUpdated + ' updated across ' + processed + ' scene' + (processed === 1 ? '' : 's') + '.');
+      Toast('Wiki rebuilt: ' + totalCreated + ' added, ' + totalUpdated + ' updated, ' + synthed + ' rewritten across ' + processed + ' scene' + (processed === 1 ? '' : 's') + '.');
     } catch (e) {
       console.error(e); Toast(e.message);
       go.disabled = false; go.textContent = 'Start';

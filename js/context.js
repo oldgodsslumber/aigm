@@ -157,6 +157,37 @@ const Context = (function () {
     return lines.join('\n');
   }
 
+  /* System prompt for the second phase of "Rebuild from scenes": after per-scene
+   * extraction has discovered WHICH entities exist (but only thin, scene-local
+   * bodies), this consolidates ONE entry's facts — its accumulated body plus the
+   * transcript excerpts where it is mentioned across the whole campaign — into a
+   * single rich, comprehensive writeup. Strictly fact-bound: it reorganizes and
+   * expands phrasing, never invents. Returns ONE JSON object. */
+  function wikiSynthesisPrompt(opts) {
+    opts = opts || {};
+    const e = opts.entry || {};
+    const aka = (e.aliases && e.aliases.length) ? ' (also known as ' + e.aliases.join(', ') + ')' : '';
+    let lines = [
+      'You are a worldbuilding archivist polishing ONE wiki entry for a tabletop RPG campaign. You are given the facts gathered about this entry so far, plus the excerpts of the play transcript where it is mentioned across the whole campaign.',
+      'Rewrite all of it into a SINGLE, comprehensive, well-organized entry body. Consolidate repeated facts, resolve them into a flowing encyclopedia-style writeup, and KEEP every durable fact the material establishes — its role and significance, history, relationships, notable traits, and current status. Organize a longer entry into paragraphs (use "\\n\\n" between them).',
+      'Record ONLY what the material actually establishes or clearly implies — do NOT invent new facts, events, names, or details, and do NOT pad with filler to reach a length. Do NOT narrate, continue the story, or address the player. Write in third person and present the entity as it stands by the end of the material.',
+      'Make the body as full as the material genuinely supports: several paragraphs for a major, often-mentioned entity; a tight paragraph for a minor one.',
+      '',
+      'THE ENTRY: [' + (e.type || 'npc') + '] ' + (e.name || '') + aka
+    ];
+    const world = [];
+    if (opts.genres && opts.genres.length) world.push('GENRE(S): ' + opts.genres.join(', '));
+    if (opts.setting && String(opts.setting).trim()) world.push('SETTING: ' + String(opts.setting).trim());
+    if (world.length) lines = lines.concat(['', 'World context (tone/naming only):', world.join('\n')]);
+    lines = lines.concat([
+      '',
+      'Respond with ONLY a single JSON object and nothing else — no prose, no commentary, no markdown, no code fences: ' +
+      '{"type": "<the type above>", "name": "<the exact name above>", "aliases": ["<other names>"], "tags": ["<topics>"], "body": "<the rewritten entry>"}. ' +
+      'aliases and tags must be arrays (use [] if none). Keep the same name and type.'
+    ]);
+    return lines.join('\n');
+  }
+
   /* System prompt for the Wiki tab's "Generate from a topic" box. The player
    * names a setting/franchise; the model writes a starter set of wiki entries
    * from its knowledge (and, when grounded, live Google Search results). */
@@ -441,5 +472,5 @@ const Context = (function () {
     };
   }
 
-  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiBackfillPrompt: wikiBackfillPrompt, wikiTopicPrompt: wikiTopicPrompt, wikiDedupePrompt: wikiDedupePrompt, planPrompt: planPrompt, est: est };
+  return { assemble: assemble, protocolPrompt: protocolPrompt, wikiIntakePrompt: wikiIntakePrompt, wikiBackfillPrompt: wikiBackfillPrompt, wikiSynthesisPrompt: wikiSynthesisPrompt, wikiTopicPrompt: wikiTopicPrompt, wikiDedupePrompt: wikiDedupePrompt, planPrompt: planPrompt, est: est };
 })();
