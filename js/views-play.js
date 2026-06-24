@@ -194,7 +194,14 @@ Views.play = async function (root, cid) {
   } catch (e) { /* ignore */ }
   input.addEventListener('input', saveDraft);
 
+  /* On a phone/tablet the on-screen keyboard's return key must insert a newline,
+   * NOT send — fat-fingering Enter mid-sentence kept firing off half-typed moves.
+   * Only a real (non-touch) keyboard gets Enter-to-send; Shift+Enter always newlines. */
+  const touchDevice = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches)
+    || ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
   input.addEventListener('keydown', function (e) {
+    if (touchDevice) return; /* let the newline happen; Send button submits */
+    if (e.isComposing) return; /* mid-IME composition — Enter is committing text, not sending */
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
   });
 
