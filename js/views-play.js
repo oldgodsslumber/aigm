@@ -43,8 +43,6 @@ Views.play = async function (root, cid) {
 
   const endSceneBtn = h('button', { class: 'btn small' }, 'End scene');
   endSceneBtn.addEventListener('click', endScene);
-  const setupBtn = h('button', { class: 'btn small ghost', title: 'Edit premise, boundaries, character & cast' }, 'Story & cast');
-  setupBtn.addEventListener('click', editStorySetup);
   /* ---------- save point (single rollback slot) ---------- */
   const savePointBtn = h('button', { class: 'btn small ghost', title: 'Save a rollback point you can return to if a risky move goes wrong' }, '⚑ Save point');
   const restoreBtn = h('button', { class: 'btn small ghost', style: 'display:none', title: 'Roll back to your save point' }, '↺ Restore');
@@ -113,7 +111,7 @@ Views.play = async function (root, cid) {
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, reqMeter, restoreBtn, savePointBtn, saveCharBtn, setupBtn, endSceneBtn)),
+      h('div', { class: 'scene-bar-actions' }, reqMeter, restoreBtn, savePointBtn, saveCharBtn, endSceneBtn)),
     h('div', { class: 'play-body' },
       h('div', { class: 'chat-zone' },
         banner, logEl,
@@ -261,7 +259,19 @@ Views.play = async function (root, cid) {
         if (found.aliases.indexOf(found.name) < 0) found.aliases.push(found.name);
         found.name = name;
       }
-      found.body = data.body || found.body;
+      /* Add newly-learned facts instead of clobbering the entry: a discovery
+       * update that carries only the new tidbit is appended; a full rewrite that
+       * already contains the old text replaces it; an already-known fact is a
+       * no-op. Mirrors the wiki-tab upsert so in-play clue-recording never
+       * destroys what's already there. */
+      const oldBody = String(found.body || '').trim();
+      const newBody = String(data.body || '').trim();
+      if (newBody) {
+        if (!oldBody) found.body = newBody;
+        else if (newBody.indexOf(oldBody) >= 0) found.body = newBody;                  // new is a superset
+        else if (oldBody.indexOf(newBody) < 0) found.body = oldBody + '\n\n' + newBody; // genuinely new — keep both
+        /* else: new already contained in old — leave it */
+      }
       found.type = data.type || found.type;
       if (data.hidden === true) found.hidden = true;
       if (data.secret && String(data.secret).trim()) found.secret = String(data.secret).trim();
@@ -307,103 +317,6 @@ Views.play = async function (root, cid) {
     if (!input.disabled) input.focus();
   }
 
-  async function editStorySetup() {
-    const format = formatPicker(campaign.format || 'campaign');
-    const genre = genrePicker(campaign.genres || []);
-    const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place.' }, campaign.setting || '');
-    const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
-    const premiseTa = h('textarea', { rows: '5', placeholder: 'Where does the story start? What\'s the situation, the hook, the job?' }, campaign.premise || '');
-    const boundsTa = h('textarea', { rows: '4', placeholder: 'Tone, content to keep in or out — e.g. "pulpy and fun, fade to black on gore, no harm to children".' }, campaign.boundaries || '');
-
-    /* ---- cast: wiki entries pinned to the CURRENT scene ---- */
-    const allWiki = await Store.listWiki(cid);
-    let pinnedIds = (scene.pinnedEntryIds || []).slice();
-    const existingWrap = h('div', { class: 'cast-list' });
-    function renderExisting() {
-      existingWrap.innerHTML = '';
-      const pinned = pinnedIds
-        .map(function (id) { return allWiki.find(function (e) { return e.id === id; }); })
-        .filter(function (e) { return e && !e.mergedInto; });
-      if (!pinned.length) { existingWrap.append(h('p', { class: 'card-sub' }, 'Nothing pinned to this scene yet.')); return; }
-      pinned.forEach(function (e) {
-        const rm = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Unpin' }, 'Unpin');
-        rm.addEventListener('click', function () {
-          pinnedIds = pinnedIds.filter(function (x) { return x !== e.id; });
-          renderExisting();
-        });
-        existingWrap.append(h('div', { class: 'cast-row' },
-          h('div', { class: 'cast-row-head' }, h('span', null, '📌 ' + e.name + ' · ' + e.type), rm)));
-      });
-    }
-    renderExisting();
-
-    const newRows = [];
-    const newWrap = h('div', { class: 'cast-list' });
-    function addCastRow() {
-      const nameI = h('input', { type: 'text', placeholder: 'Name' });
-      const typeS = h('select', null,
-        h('option', { value: 'npc' }, 'NPC'),
-        h('option', { value: 'faction' }, 'Faction'),
-        h('option', { value: 'location' }, 'Location'),
-        h('option', { value: 'item' }, 'Item'));
-      const descI = h('input', { type: 'text', placeholder: 'Who/what they are — one or two lines the GM should know' });
-      const del = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Remove' }, '×');
-      const rowEl = h('div', { class: 'cast-row' },
-        h('div', { class: 'cast-row-head' }, nameI, typeS, del), descI);
-      const ref = { name: nameI, type: typeS, desc: descI };
-      del.addEventListener('click', function () {
-        const i = newRows.indexOf(ref); if (i >= 0) newRows.splice(i, 1);
-        rowEl.remove();
-      });
-      newRows.push(ref);
-      newWrap.append(rowEl);
-      nameI.focus();
-    }
-    const addCastBtn = h('button', { class: 'btn small', type: 'button' }, '+ Add character / NPC');
-    addCastBtn.addEventListener('click', addCastRow);
-
-    const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
-    saveBtn.addEventListener('click', async function () {
-      campaign.format = format.get();
-      campaign.genres = genre.get();
-      campaign.setting = settingTa.value.trim();
-      campaign.premise = premiseTa.value.trim();
-      campaign.boundaries = boundsTa.value.trim();
-      await Store.saveCampaign(campaign);
-      if (pc) { pc.description = charTa.value.trim(); await Store.saveCharacter(cid, pc); }
-      for (const r of newRows) {
-        const cn = r.name.value.trim();
-        if (!cn) continue;
-        const id = await Store.saveWiki(cid, {
-          type: r.type.value || 'npc', name: cn, aliases: [], tags: [],
-          body: r.desc.value.trim(), createdBy: 'player', mergedInto: null
-        });
-        pinnedIds.push(id);
-      }
-      scene.pinnedEntryIds = pinnedIds;
-      await Store.saveScene(cid, scene);
-      renderHeader();
-      Modal.close();
-      Toast('Setup saved — the GM will use it from the next reply.');
-    });
-
-    Modal.open(h('div', null,
-      h('h2', null, 'Story & cast setup'),
-      h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override genre conventions.'),
-      h('label', { class: 'form-row' }, h('span', null, 'Play format'), format.el),
-      h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
-      h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa),
-      pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
-      h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
-      h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa),
-      h('div', { class: 'create-section' },
-        h('h3', null, 'Cast pinned to this scene'),
-        h('p', { class: 'card-sub' }, 'NPCs, factions, or places the GM should know now. Pinned cast is always in the GM\'s context.'),
-        existingWrap, newWrap, addCastBtn),
-      h('div', { class: 'modal-actions' },
-        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), saveBtn)));
-  }
-
   async function begin() {
     const hasPremise = campaign.premise && campaign.premise.trim();
     const wiki = await Store.listWiki(cid);
@@ -428,8 +341,16 @@ Views.play = async function (root, cid) {
       Modal.close();
       renderLog();
     });
+    const del = h('button', { class: 'btn danger' }, 'Delete');
+    del.addEventListener('click', async function () {
+      if (!confirm('Delete this GM message? This can\'t be undone.')) return;
+      await Store.deleteMessage(cid, m.id);
+      messages = await Store.listMessages(cid);
+      Modal.close();
+      renderLog();
+    });
     const actions = h('div', { class: 'modal-actions' },
-      h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'));
+      h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), del);
     /* if this reply was auto-cleaned, let the player pull back the full original */
     if (m.raw && m.raw !== m.content) {
       const orig = h('button', { class: 'btn' }, 'Load original (uncleaned)');
@@ -441,6 +362,26 @@ Views.play = async function (root, cid) {
       h('h2', null, 'Edit the scene'),
       h('p', { class: 'card-sub' }, 'Edit the GM\'s text directly. Any fenced blocks (wiki, scene) are shown as written — leave them intact unless you mean to change them.'),
       ta, actions));
+  }
+
+  /* edit a player message's text in place (fix a typo, finish a cut-off line) */
+  function editPlayerMessage(m) {
+    const ta = h('textarea', { rows: '6', class: 'edit-msg-input' }, m.content);
+    const save = h('button', { class: 'btn accent' }, 'Save');
+    save.addEventListener('click', async function () {
+      m.content = ta.value;
+      await Store.updateMessage(cid, m);
+      messages = await Store.listMessages(cid);
+      Modal.close();
+      renderLog();
+    });
+    const actions = h('div', { class: 'modal-actions' },
+      h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), save);
+    Modal.open(h('div', { class: 'modal-wide' },
+      h('h2', null, 'Edit your message'),
+      h('p', { class: 'card-sub' }, 'Fix what you wrote — this won\'t re-run the GM\'s reply.'),
+      ta, actions));
+    ta.focus();
   }
 
   /* regenerate the latest GM reply: rewind to the trigger and re-run the turn */
@@ -790,7 +731,14 @@ Views.play = async function (root, cid) {
 
   function renderMessage(m) {
     if (m.role === 'player') {
-      return h('div', { class: 'msg msg-player' }, h('div', { class: 'msg-bubble', html: md(m.content) }));
+      const actions = h('div', { class: 'msg-actions' });
+      const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
+      editBtn.addEventListener('click', function () { editPlayerMessage(m); });
+      actions.append(editBtn);
+      return h('div', { class: 'msg msg-player' },
+        h('div', { class: 'msg-player-col' },
+          h('div', { class: 'msg-bubble', html: md(m.content) }),
+          actions));
     }
     if (m.role === 'gm') {
       const el = h('div', { class: 'msg msg-gm' });

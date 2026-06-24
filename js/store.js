@@ -222,6 +222,12 @@ const Store = (function () {
       const i = t.findIndex(function (m) { return m.id === msg.id; });
       if (i >= 0) { t[i] = clone(msg); persist(); emit('transcript', { campaignId: cid, msgId: msg.id }); }
     },
+    /* remove a single message by id (used to delete a GM reply by hand) */
+    deleteMessage: async function (cid, msgId) {
+      const t = camp(cid).transcript;
+      const i = t.findIndex(function (m) { return m.id === msgId; });
+      if (i >= 0) { t.splice(i, 1); persist(); emit('transcript', { campaignId: cid }); }
+    },
     /* remove the message with msgId and everything after it (used to redo a
      * GM reply: rewind to the trigger, then re-run the turn) */
     truncateFrom: async function (cid, msgId) {

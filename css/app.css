@@ -340,7 +340,7 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .msg { max-width: 720px; width: 100%; margin: 0 auto; }
 .msg-gm { display: grid; gap: 12px; }
 .msg-actions { display: flex; gap: 6px; opacity: 0.6; transition: opacity .12s; }
-.msg-gm:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
+.msg-gm:hover .msg-actions, .msg-player:hover .msg-actions, .msg-actions:focus-within { opacity: 1; }
 .narration { font-family: var(--serif); font-size: 17.5px; line-height: 1.7; color: var(--ink); }
 .narration p { margin: 0 0 0.85em; text-wrap: pretty; }
 .narration p:last-child { margin-bottom: 0; }
@@ -348,6 +348,8 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .narration code { font-family: var(--mono); font-size: 0.85em; background: var(--bg2); padding: 1px 5px; border-radius: 4px; }
 
 .msg-player { display: flex; justify-content: flex-end; }
+.msg-player-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; max-width: 78%; }
+.msg-player-col .msg-bubble { max-width: 100%; }
 .msg-bubble {
   background: var(--bg3);
   border: 1px solid var(--line-soft);

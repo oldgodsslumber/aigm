@@ -339,6 +339,13 @@ const LLM = (function () {
       err.status = res.status;
       throw err;
     }
+    /* A 200 means Google accepted and ran the call — it consumes a free-tier
+     * request NOW, before we know whether usable text came back. Count it here
+     * so an empty or filtered reply (thinking ate the budget, soft block,
+     * finishReason MAX_TOKENS) is still tallied — that response spent quota just
+     * like a good one. Errors that never reach a 200 (429, 5xx, timeouts) skip
+     * this and are correctly NOT counted, since Google doesn't bill them. */
+    const used = bumpUsage(model);
     const data = await res.json();
     const cand = data.candidates && data.candidates[0];
     const text = cand && cand.content && cand.content.parts
@@ -346,7 +353,7 @@ const LLM = (function () {
     if (!text) {
       throw new Error(buildEmptyResponseMessage(data, cand, model));
     }
-    return text;
+    return { text: text, used: used };
   }
 
   async function gemini(settings, system, messages, options) {
@@ -361,17 +368,16 @@ const LLM = (function () {
 
     if (options.grounding) {
       let active = /^gemini/i.test(chosen) ? chosen : 'gemini-2.5-flash';
-      let text;
+      let result;
       try {
-        text = await callGeminiModel(settings, active, system, messages, gen);
+        result = await callGeminiModel(settings, active, system, messages, gen);
       } catch (err) {
         if (err.status !== 429 || active === 'gemini-2.5-flash-lite') throw err;
         markExhausted(active);
         active = 'gemini-2.5-flash-lite';
-        text = await callGeminiModel(settings, active, system, messages, gen);
+        result = await callGeminiModel(settings, active, system, messages, gen);
       }
-      const used = bumpUsage(active);
-      return { text: text, model: active, label: labelFor(active), used: used, limit: limitFor(active) };
+      return { text: result.text, model: active, label: labelFor(active), used: result.used, limit: limitFor(active) };
     }
 
     let active = pickActiveModel(chosen);
@@ -379,9 +385,9 @@ const LLM = (function () {
       console.log('[llm] ' + chosen + ' exhausted for today — falling through to ' + active);
     }
 
-    let text;
+    let result;
     try {
-      text = await callGeminiModel(settings, active, system, messages, gen);
+      result = await callGeminiModel(settings, active, system, messages, gen);
     } catch (err) {
       /* On a 429, mark this model exhausted and try the next in the chain.
        * Handles the case where Google's count is ahead of our local one. */
@@ -391,11 +397,10 @@ const LLM = (function () {
       if (next === active) throw err; // no more chain to fall through to
       console.log('[llm] ' + active + ' hit 429 — auto-switching to ' + next);
       active = next;
-      text = await callGeminiModel(settings, active, system, messages, gen);
+      result = await callGeminiModel(settings, active, system, messages, gen);
     }
 
-    const used = bumpUsage(active);
-    return { text: text, model: active, label: labelFor(active), used: used, limit: limitFor(active) };
+    return { text: result.text, model: active, label: labelFor(active), used: result.used, limit: limitFor(active) };
   }
 
   async function local(settings, system, messages, options) {

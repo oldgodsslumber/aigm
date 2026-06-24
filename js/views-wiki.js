@@ -5,6 +5,9 @@ Views.wiki = async function (root, cid, openId) {
   root.dataset.screenLabel = 'Wiki View';
   const campaign = await Store.getCampaign(cid);
   let entries = await Store.listWiki(cid);
+  /* the player character — edited from the Story setup modal, alongside premise/boundaries */
+  const chars = await Store.listCharacters(cid);
+  const pc = chars.find(function (c) { return !c.isNPC; }) || chars[0] || null;
   /* current scene drives the "pin to scene" toggle on each card */
   let curScene = campaign.currentSceneId ? await Store.getScene(cid, campaign.currentSceneId) : null;
   function isPinned(id) { return !!(curScene && (curScene.pinnedEntryIds || []).indexOf(id) >= 0); }
@@ -52,6 +55,12 @@ Views.wiki = async function (root, cid, openId) {
     openEditor({ type: 'npc', name: '', aliases: [], tags: [], body: '', createdBy: 'user', mergedInto: null });
   });
 
+  /* Story setup — premise, boundaries, setting, character & pinned cast. Lives
+   * here in the Wiki (not Play): it's world/campaign configuration, not part of
+   * the moment-to-moment chat loop. */
+  const setupBtn = h('button', { class: 'btn accent', title: 'Edit premise, boundaries, setting, character & pinned cast' }, 'Story setup');
+  setupBtn.addEventListener('click', editStorySetup);
+
   const dedupeBtn = h('button', { class: 'btn', title: 'Scan the wiki for entries that are the same thing and merge them' }, '⧉ Find duplicates');
   dedupeBtn.addEventListener('click', runDedupe);
 
@@ -89,8 +98,8 @@ Views.wiki = async function (root, cid, openId) {
   root.append(h('div', { class: 'page' },
     h('div', { class: 'page-head' },
       h('h1', null, 'Wiki', h('span', { class: 'head-sub' }, campaign.name)),
-      h('div', { class: 'page-head-actions' }, planBtn, updatePlanBtn, dedupeBtn, backfillBtn, newBtn)),
-    h('details', { class: 'wiki-intake', open: '' },
+      h('div', { class: 'page-head-actions' }, setupBtn, planBtn, updatePlanBtn, dedupeBtn, backfillBtn, newBtn)),
+    h('details', { class: 'wiki-intake' },
       h('summary', null, 'Add world info'),
       h('p', { class: 'card-sub' }, 'Drop in lore and notes; they’re filed into the wiki as characters, locations, factions, items, and events — without touching the story.'),
       worldTa,
@@ -487,6 +496,115 @@ Views.wiki = async function (root, cid, openId) {
       });
       listEl.append(h('div', { class: 'wiki-card-wrap' }, card, pinBtn));
     });
+  }
+
+  /* Story setup modal — premise, boundaries, setting, character, and the cast
+   * pinned to the current scene. Moved here from the Play view: this is
+   * campaign configuration that belongs with the Wiki, not the chat loop. */
+  async function editStorySetup() {
+    const format = formatPicker(campaign.format || 'campaign');
+    const genre = genrePicker(campaign.genres || []);
+    const settingTa = h('textarea', { rows: '2', placeholder: 'Where and when? The world, era, place.' }, campaign.setting || '');
+    const charTa = h('textarea', { rows: '4', placeholder: 'Who are you? Background, look, personality, what you\'re good at, what you want.' }, (pc && pc.description) || '');
+    const premiseTa = h('textarea', { rows: '5', placeholder: 'Where does the story start? What\'s the situation, the hook, the job?' }, campaign.premise || '');
+    const boundsTa = h('textarea', { rows: '4', placeholder: 'Tone, content to keep in or out — e.g. "pulpy and fun, fade to black on gore, no harm to children".' }, campaign.boundaries || '');
+
+    /* ---- cast: wiki entries pinned to the CURRENT scene (only if one exists) ---- */
+    let pinnedIds = (curScene && curScene.pinnedEntryIds || []).slice();
+    const existingWrap = h('div', { class: 'cast-list' });
+    function renderExisting() {
+      existingWrap.innerHTML = '';
+      const pinned = pinnedIds
+        .map(function (id) { return entries.find(function (e) { return e.id === id; }); })
+        .filter(function (e) { return e && !e.mergedInto; });
+      if (!pinned.length) { existingWrap.append(h('p', { class: 'card-sub' }, 'Nothing pinned to this scene yet.')); return; }
+      pinned.forEach(function (e) {
+        const rm = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Unpin' }, 'Unpin');
+        rm.addEventListener('click', function () {
+          pinnedIds = pinnedIds.filter(function (x) { return x !== e.id; });
+          renderExisting();
+        });
+        existingWrap.append(h('div', { class: 'cast-row' },
+          h('div', { class: 'cast-row-head' }, h('span', null, '📌 ' + e.name + ' · ' + e.type), rm)));
+      });
+    }
+    renderExisting();
+
+    const newRows = [];
+    const newWrap = h('div', { class: 'cast-list' });
+    function addCastRow() {
+      const nameI = h('input', { type: 'text', placeholder: 'Name' });
+      const typeS = h('select', null,
+        h('option', { value: 'npc' }, 'NPC'),
+        h('option', { value: 'faction' }, 'Faction'),
+        h('option', { value: 'location' }, 'Location'),
+        h('option', { value: 'item' }, 'Item'));
+      const descI = h('input', { type: 'text', placeholder: 'Who/what they are — one or two lines the GM should know' });
+      const del = h('button', { class: 'btn small ghost', type: 'button', 'aria-label': 'Remove' }, '×');
+      const rowEl = h('div', { class: 'cast-row' },
+        h('div', { class: 'cast-row-head' }, nameI, typeS, del), descI);
+      const ref = { name: nameI, type: typeS, desc: descI };
+      del.addEventListener('click', function () {
+        const i = newRows.indexOf(ref); if (i >= 0) newRows.splice(i, 1);
+        rowEl.remove();
+      });
+      newRows.push(ref);
+      newWrap.append(rowEl);
+      nameI.focus();
+    }
+    const addCastBtn = h('button', { class: 'btn small', type: 'button' }, '+ Add character / NPC');
+    addCastBtn.addEventListener('click', addCastRow);
+
+    const saveBtn = h('button', { class: 'btn accent' }, 'Save setup');
+    saveBtn.addEventListener('click', async function () {
+      campaign.format = format.get();
+      campaign.genres = genre.get();
+      campaign.setting = settingTa.value.trim();
+      campaign.premise = premiseTa.value.trim();
+      campaign.boundaries = boundsTa.value.trim();
+      await Store.saveCampaign(campaign);
+      if (pc) { pc.description = charTa.value.trim(); await Store.saveCharacter(cid, pc); }
+      if (curScene) {
+        for (const r of newRows) {
+          const cn = r.name.value.trim();
+          if (!cn) continue;
+          const id = await Store.saveWiki(cid, {
+            type: r.type.value || 'npc', name: cn, aliases: [], tags: [],
+            body: r.desc.value.trim(), createdBy: 'player', mergedInto: null
+          });
+          pinnedIds.push(id);
+        }
+        curScene.pinnedEntryIds = pinnedIds;
+        await Store.saveScene(cid, curScene);
+      }
+      entries = await Store.listWiki(cid);
+      curScene = campaign.currentSceneId ? await Store.getScene(cid, campaign.currentSceneId) : null;
+      renderList();
+      Modal.close();
+      Toast('Setup saved — the GM will use it from the next reply.');
+    });
+
+    const castSection = curScene
+      ? h('div', { class: 'create-section' },
+          h('h3', null, 'Cast pinned to this scene'),
+          h('p', { class: 'card-sub' }, 'NPCs, factions, or places the GM should know now. Pinned cast is always in the GM\'s context.'),
+          existingWrap, newWrap, addCastBtn)
+      : h('div', { class: 'create-section' },
+          h('h3', null, 'Cast'),
+          h('p', { class: 'card-sub' }, 'Start a scene in Play to pin cast to it. You can still add and edit entries from the Wiki list below.'));
+
+    Modal.open(h('div', null,
+      h('h2', null, 'Story setup'),
+      h('p', { class: 'card-sub' }, 'These are sent to the GM with every turn. Boundaries are treated as hard limits that override genre conventions.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Play format'), format.el),
+      h('label', { class: 'form-row' }, h('span', null, 'Genre(s)'), genre.el),
+      h('label', { class: 'form-row' }, h('span', null, 'Setting'), settingTa),
+      pc ? h('label', { class: 'form-row' }, h('span', null, 'Who is your character?'), charTa) : null,
+      h('label', { class: 'form-row' }, h('span', null, 'Premise & starting situation'), premiseTa),
+      h('label', { class: 'form-row' }, h('span', null, 'Tone & boundaries'), boundsTa),
+      castSection,
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), saveBtn)));
   }
 
   async function openEditor(e) {
