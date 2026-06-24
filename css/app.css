@@ -294,7 +294,30 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .scene-bar-actions { display: flex; gap: 8px; }
 
 .play-body { flex: 1; display: flex; min-height: 0; }
-.chat-zone { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.chat-zone { flex: 1; display: flex; flex-direction: column; min-width: 0; position: relative; }
+
+/* floating jump-to-latest button — hovers just above the composer, bottom-right */
+.jump-bottom {
+  position: absolute;
+  right: 20px;
+  bottom: 90px;
+  width: 44px; height: 44px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  background: var(--bg3);
+  color: var(--ink);
+  border: 1px solid var(--line-soft);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.4);
+  font-size: 22px; line-height: 1;
+  cursor: pointer;
+  z-index: 6;
+  visibility: hidden; opacity: 0; transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity .15s ease, transform .15s ease, visibility .15s ease;
+}
+.jump-bottom.show { visibility: visible; opacity: 1; transform: translateY(0); pointer-events: auto; }
+.jump-bottom:hover { background: var(--bg2); }
+.drive-mode .jump-bottom { display: none; }
 .chat-log { flex: 1; overflow-y: auto; padding: 28px 8vw 20px; display: flex; flex-direction: column; gap: 18px; }
 
 .sheet-panel {

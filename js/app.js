@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260624a';
+const BUILD = '20260624b';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — delete GM messages, edit player messages', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — stick chat to bottom on reopen + jump-to-latest button', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();

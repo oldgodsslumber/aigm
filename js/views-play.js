@@ -106,19 +106,74 @@ Views.play = async function (root, cid) {
   }
   readDriveBtn.addEventListener('click', function () { readLatestGm(false); });
 
+  /* floating "jump to latest" button — shown only when scrolled up from the bottom */
+  const jumpBtn = h('button', { type: 'button', class: 'jump-bottom', 'aria-label': 'Jump to latest', title: 'Jump to latest' }, '↓');
+  const chatZone = h('div', { class: 'chat-zone' },
+    banner, logEl,
+    h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
+      input, sendBtn),
+    jumpBtn,
+    drive ? driveBar : null);
   play.append(
     h('header', { class: 'scene-bar' },
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
       h('div', { class: 'scene-bar-actions' }, reqMeter, restoreBtn, savePointBtn, saveCharBtn, endSceneBtn)),
-    h('div', { class: 'play-body' },
-      h('div', { class: 'chat-zone' },
-        banner, logEl,
-        h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
-          input, sendBtn),
-        drive ? driveBar : null)));
+    h('div', { class: 'play-body' }, chatZone));
   root.append(play);
+
+  /* ---------- stick-to-bottom + jump-to-latest ----------
+   * .chat-log is the scroll container. Two problems this solves:
+   *  1. On reopen the player was landing "halfway up" — the first paint scrolls
+   *     to the bottom before web fonts / images settle, and that late reflow
+   *     grows the log and strands the old pixel offset partway up. So we re-pin
+   *     to the bottom across a few frames and whenever late layout lands, but
+   *     only while the player hasn't deliberately scrolled away.
+   *  2. A down-arrow appears whenever they ARE scrolled up, snapping them back. */
+  const BOTTOM_SLOP = 80; /* px from the bottom that still counts as "at the bottom" */
+  let stickBottom = true; /* are we currently glued to the bottom? */
+  function isAtBottom() { return logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight <= BOTTOM_SLOP; }
+  function scrollToBottom() { logEl.scrollTop = logEl.scrollHeight; }
+  function refreshScrollState() {
+    stickBottom = isAtBottom();
+    jumpBtn.classList.toggle('show', !stickBottom);
+  }
+  function pinBottomSoon() {
+    if (!stickBottom) return;
+    scrollToBottom();
+    requestAnimationFrame(function () { if (stickBottom) scrollToBottom(); });
+    setTimeout(function () { if (stickBottom) { scrollToBottom(); refreshScrollState(); } }, 120);
+    setTimeout(function () { if (stickBottom) { scrollToBottom(); refreshScrollState(); } }, 450);
+  }
+  jumpBtn.addEventListener('click', function () { scrollToBottom(); refreshScrollState(); });
+  logEl.addEventListener('scroll', refreshScrollState, { passive: true });
+  /* late-settling layout: fonts and images both grow the log after first paint */
+  if (document.fonts && document.fonts.ready) {
+    document.fonts.ready.then(function () { if (stickBottom && document.body.contains(logEl)) scrollToBottom(); });
+  }
+  logEl.addEventListener('load', function (e) {
+    if (e.target && e.target.tagName === 'IMG' && stickBottom) scrollToBottom();
+  }, true);
+
+  /* Returning to the app (tab re-shown, or restored from the mobile back/forward
+   * cache after the screen slept) must not dump the player mid-log. If they were
+   * at the bottom, put them back there. Only one Play view's listeners stay live. */
+  function onResume() {
+    if (!document.body.contains(logEl)) { teardownResume(); return; }
+    if (stickBottom) pinBottomSoon();
+    refreshScrollState();
+  }
+  function onPageShow(e) { if (e.persisted) onResume(); }
+  function onVis() { if (!document.hidden) onResume(); }
+  function teardownResume() {
+    window.removeEventListener('pageshow', onPageShow);
+    document.removeEventListener('visibilitychange', onVis);
+  }
+  if (Views.play._teardownResume) Views.play._teardownResume();
+  window.addEventListener('pageshow', onPageShow);
+  document.addEventListener('visibilitychange', onVis);
+  Views.play._teardownResume = teardownResume;
 
   /* Persist the composer text per-campaign so leaving Play (e.g. to Settings)
    * and coming back doesn't lose an in-progress move. sessionStorage, so it
@@ -870,8 +925,9 @@ Views.play = async function (root, cid) {
       const offset = newestGmEl.getBoundingClientRect().top - logEl.getBoundingClientRect().top;
       logEl.scrollTop = logEl.scrollTop + offset - 8; /* small breathing room above */
     } else if (firstRender) {
-      logEl.scrollTop = logEl.scrollHeight;
+      pinBottomSoon(); /* robust against late font/image reflow on (re)open */
     }
+    refreshScrollState();
 
     /* Drive mode: read each NEW GM reply aloud automatically. The first render
      * just sets the baseline so we don't replay the whole backlog on open.
