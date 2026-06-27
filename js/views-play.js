@@ -7,6 +7,7 @@ Views.play = async function (root, cid) {
   root.dataset.screenLabel = 'Play View';
   let campaign, pc, scenes, scene, messages;
   let busy = false, awaitingSceneSummary = false, lastError = null, turnRequests = 0, lastGmId = null;
+  let pendingEpilogue = '';
   let lastReadId = null, firstRender = true; /* drive-mode auto-read: only speak NEW replies, not history */
   let lastTopId = null; /* reading mode: scroll to the TOP of each NEW reply, once, so it isn't spoiled */
   let pendingPlayer = null; /* { id, text } of a player move awaiting its first GM reply, so we can roll it back on error */
@@ -535,7 +536,7 @@ Views.play = async function (root, cid) {
         } else if (b.tag === 'gm-lookup') {
           lookups.push(b.data.query);
         } else if (b.tag === 'gm-scene') {
-          if (awaitingSceneSummary) openSceneEditor(b.data);
+          if (awaitingSceneSummary) closeScene(b.data);
         }
       } catch (e) { console.warn('[AI GM] block failed:', b.tag, e); }
     }
@@ -638,8 +639,30 @@ Views.play = async function (root, cid) {
       h('div', { class: 'modal-actions' }, restore)));
   }
 
-  async function endScene() {
+  /* Ending a scene: the player writes an optional short epilogue (the last bit
+   * of information for the scene). The GM then drafts the synopsis silently —
+   * no review, no approval — and the scene closes on its own. The epilogue is
+   * appended verbatim to the summary so the player's exact words survive into
+   * the GM's memory. */
+  function endScene() {
     if (busy) return;
+    const epiTa = h('textarea', { rows: '4',
+      placeholder: 'Optional — a closing beat, a final line, or anything the GM should remember about how this scene ended.' });
+    const go = h('button', { class: 'btn accent' }, 'End scene');
+    go.addEventListener('click', function () {
+      pendingEpilogue = epiTa.value.trim();
+      Modal.close();
+      requestSceneSummary();
+    });
+    Modal.open(h('div', { class: 'modal-wide' },
+      h('h2', null, 'End of scene'),
+      h('p', { class: 'card-sub' }, 'Add a short epilogue if you like — the last bit of information for this scene. The GM will write the synopsis automatically and close the scene.'),
+      h('label', { class: 'form-row' }, h('span', null, 'Epilogue'), epiTa),
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), go)));
+  }
+
+  async function requestSceneSummary() {
     awaitingSceneSummary = true;
     await Store.addMessage(cid, {
       role: 'info', sceneId: scene.id,
@@ -649,42 +672,35 @@ Views.play = async function (root, cid) {
     renderLog();
     await runTurn(0);
     if (awaitingSceneSummary) {
-      /* model didn't comply — let the player write it */
-      openSceneEditor({ title: scene.title, summary: '' });
+      /* model didn't comply — close anyway with whatever we have rather than
+       * blocking the player. The epilogue (if any) is still preserved. */
+      closeScene({ title: scene.title, summary: '' });
     }
   }
 
-  function openSceneEditor(data) {
+  async function closeScene(data) {
     awaitingSceneSummary = false;
-    const titleInp = h('input', { type: 'text', value: data.title || scene.title });
-    const sumTa = h('textarea', { rows: '8' }, data.summary || '');
-    const save = h('button', { class: 'btn accent' }, 'Close scene & continue');
-    save.addEventListener('click', async function () {
-      scene.title = titleInp.value.trim() || scene.title;
-      scene.summary = sumTa.value.trim();
-      scene.status = 'closed';
-      scene.closedAt = Date.now();
-      await Store.saveScene(cid, scene);
-      const n = scenes.filter(function (s) { return s.status === 'closed'; }).length + 2;
-      const sid = await Store.saveScene(cid, { title: 'Scene ' + n, summary: '', status: 'active', pinnedEntryIds: [], startedAt: Date.now() });
-      campaign.currentSceneId = sid;
-      await Store.saveCampaign(campaign);
-      scenes = await Store.listScenes(cid);
-      scene = scenes.find(function (s) { return s.id === sid; });
-      Modal.close();
-      renderHeader(); renderLog();
-      const fmtHint = campaign.format === 'multishot'
-        ? ' Consider “Update plan” in the Wiki to recalc the villain\'s scheme.'
-        : (campaign.format === 'oneshot' ? ' You can generate a fresh AI Plan in the Wiki for the next one.' : '');
-      Toast('Scene closed. Its summary now feeds the GM\'s memory.' + fmtHint);
-    });
-    Modal.open(h('div', { class: 'modal-wide' },
-      h('h2', null, 'End of scene'),
-      h('p', { class: 'card-sub' }, 'The GM drafted this summary — it becomes the campaign\'s memory of the scene. Edit freely.'),
-      h('label', { class: 'form-row' }, h('span', null, 'Scene title'), titleInp),
-      h('label', { class: 'form-row' }, h('span', null, 'Summary'), sumTa),
-      h('div', { class: 'modal-actions' },
-        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), save)));
+    let summary = String(data.summary || '').trim();
+    if (pendingEpilogue) {
+      summary = summary ? summary + '\n\nEpilogue: ' + pendingEpilogue : 'Epilogue: ' + pendingEpilogue;
+    }
+    scene.title = String(data.title || '').trim() || scene.title;
+    scene.summary = summary;
+    scene.status = 'closed';
+    scene.closedAt = Date.now();
+    await Store.saveScene(cid, scene);
+    const n = scenes.filter(function (s) { return s.status === 'closed'; }).length + 2;
+    const sid = await Store.saveScene(cid, { title: 'Scene ' + n, summary: '', status: 'active', pinnedEntryIds: [], startedAt: Date.now() });
+    campaign.currentSceneId = sid;
+    await Store.saveCampaign(campaign);
+    scenes = await Store.listScenes(cid);
+    scene = scenes.find(function (s) { return s.id === sid; });
+    pendingEpilogue = '';
+    renderHeader(); renderLog();
+    const fmtHint = campaign.format === 'multishot'
+      ? ' Consider “Update plan” in the Wiki to recalc the villain\'s scheme.'
+      : (campaign.format === 'oneshot' ? ' You can generate a fresh AI Plan in the Wiki for the next one.' : '');
+    Toast('Scene closed. Its summary now feeds the GM\'s memory.' + fmtHint);
   }
 
   /* ---------- rendering ---------- */
@@ -786,7 +802,7 @@ Views.play = async function (root, cid) {
     if (block.tag === 'gm-scene') {
       return h('div', { class: 'inline-notice scene-notice' },
         h('span', { class: 'notice-icon' }, '❧'),
-        h('span', null, 'Scene summary proposed: ', h('strong', null, block.data.title || '')));
+        h('span', null, 'Scene closed: ', h('strong', null, block.data.title || '')));
     }
     return h('div');
   }

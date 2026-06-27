@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260624c';
+const BUILD = '20260627a';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — mobile return key newlines instead of sending', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — end-scene epilogue, auto-close (no synopsis review)', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();
