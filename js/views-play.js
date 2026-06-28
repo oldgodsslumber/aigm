@@ -114,8 +114,10 @@ Views.play = async function (root, cid) {
 
   /* floating "jump to latest" button — shown only when scrolled up from the bottom */
   const jumpBtn = h('button', { type: 'button', class: 'jump-bottom', 'aria-label': 'Jump to latest', title: 'Jump to latest' }, '↓');
+  /* multiplayer: shows who currently holds the GM turn ("⏳ GM is responding to …") */
+  const mpStatus = h('div', { class: 'mp-status', style: 'display:none' });
   const chatZone = h('div', { class: 'chat-zone' },
-    banner, logEl,
+    banner, logEl, mpStatus,
     h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
       input, sendBtn),
     jumpBtn,
@@ -125,7 +127,13 @@ Views.play = async function (root, cid) {
       h('div', { class: 'scene-bar-left' },
         h('span', { class: 'scene-camp' }, campaign.name),
         sceneTitleEl, pinsEl),
-      h('div', { class: 'scene-bar-actions' }, reqMeter, restoreBtn, savePointBtn, saveCharBtn, endSceneBtn)),
+      /* In multiplayer, scene/save-point controls rewrite the shared story, so
+       * they're host-only; every player keeps "Save character" for their own PC. */
+      h('div', { class: 'scene-bar-actions' },
+        reqMeter, saveCharBtn,
+        (!isMP || MP.isHost(campaign)) ? restoreBtn : null,
+        (!isMP || MP.isHost(campaign)) ? savePointBtn : null,
+        (!isMP || MP.isHost(campaign)) ? endSceneBtn : null)),
     h('div', { class: 'play-body' }, chatZone));
   root.append(play);
 
@@ -269,11 +277,26 @@ Views.play = async function (root, cid) {
     return reattach(kept.length ? kept : cleaned);
   }
 
+  let mpHoldsLock = false; /* whether THIS client currently holds the shared GM turn lock */
   function setBusy(b) {
     busy = b;
     sendBtn.disabled = b;
     input.disabled = b;
     renderLog();
+  }
+  /* Reflect the shared GM lock: when another player is mid-turn, show who and
+   * block sending until they're done (the realtime watch refreshes campaign). */
+  function updateMpStatus() {
+    if (!isMP) return;
+    const holder = MP.turnHolder(campaign, myUid);
+    if (holder) {
+      mpStatus.textContent = '⏳ GM is responding to ' + holder + '…';
+      mpStatus.style.display = '';
+      sendBtn.disabled = true;
+    } else {
+      mpStatus.style.display = 'none';
+      if (!busy) sendBtn.disabled = false;
+    }
   }
   function showBanner(msg, retry) {
     banner.style.display = '';
@@ -362,6 +385,19 @@ Views.play = async function (root, cid) {
   async function submit() {
     const text = input.value.trim();
     if (!text || busy) return;
+    /* multiplayer: claim the shared GM lock so only one player generates at a
+     * time. If someone else holds it, show who and keep the player's text. */
+    if (isMP) {
+      let claim;
+      try { claim = await MP.claimTurn(cid, (pc && pc.name) || 'A player'); }
+      catch (e) { Toast('Could not reach the game: ' + e.message); return; }
+      if (!claim.ok) {
+        mpStatus.textContent = '⏳ GM is responding to ' + (claim.holder || 'another player') + '…';
+        mpStatus.style.display = ''; sendBtn.disabled = true;
+        return;
+      }
+      mpHoldsLock = true;
+    }
     input.value = '';
     clearDraft();
     const pmsg = { role: 'player', content: text, sceneId: scene.id };
@@ -370,7 +406,11 @@ Views.play = async function (root, cid) {
     pendingPlayer = { id: id, text: text };
     messages = await Store.listMessages(cid);
     renderLog();
-    runTurn(0);
+    if (isMP) {
+      runTurn(0).finally(function () { mpHoldsLock = false; MP.releaseTurn(cid); });
+    } else {
+      runTurn(0);
+    }
   }
 
   /* A player move failed to get any GM reply (API error, no key). Roll the move
@@ -475,14 +515,23 @@ Views.play = async function (root, cid) {
     try {
       const settings = Settings.forCampaign(campaign);
       const wiki = await Store.listWiki(cid);
-      const asm = Context.assemble({
+      const asmOpts = {
         character: pc,
         scenes: scenes, currentSceneId: scene.id, wiki: wiki,
         genres: campaign.genres, setting: campaign.setting, format: campaign.format,
         premise: campaign.premise, boundaries: campaign.boundaries,
         rulesNotes: campaign.rulesNotes, recap: campaign.recap,
         messages: messages, budget: Settings.budgetFor(settings)
-      });
+      };
+      if (isMP) {
+        /* give the GM the whole party so it knows every character and who acted */
+        const cast = await Store.listCharacters(cid);
+        asmOpts.multiplayer = true;
+        asmOpts.party = cast.filter(function (c) { return !c.isNPC; }).map(function (c) {
+          return { name: c.name, description: c.description || '', isMe: c.ownerUid === myUid };
+        });
+      }
+      const asm = Context.assemble(asmOpts);
       const res = await LLM.chat({ settings: settings, system: asm.system, messages: asm.messages });
       turnRequests++;
       renderRequestMeter();
@@ -725,6 +774,7 @@ Views.play = async function (root, cid) {
 
   function renderHeader() {
     sceneTitleEl.textContent = scene.title + (scene.status === 'active' ? '' : ' (closed)');
+    updateMpStatus();
     pinsEl.innerHTML = '';
     (scene.pinnedEntryIds || []).forEach(async function (id) {
       const e = await Store.getWiki(cid, id);

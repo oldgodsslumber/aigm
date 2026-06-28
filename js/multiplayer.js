@@ -9,6 +9,7 @@
  */
 window.MP = (function () {
   const CAP = 6;
+  const TURN_TTL = 120000; // a generation lock older than this is treated as abandoned (client crashed/left)
 
   function ctx() {
     const c = window.FirebaseCtx;
@@ -138,6 +139,47 @@ window.MP = (function () {
 
     isHost: function (meta) {
       return !!(meta && window.FirebaseCtx && meta.hostUid === window.FirebaseCtx.uid);
-    }
+    },
+
+    /* GM turn lock: only one player generates at a time so two simultaneous
+     * actions can't produce conflicting narration. Returns { ok, holder }. */
+    claimTurn: async function (gameId, name) {
+      const c = ctx();
+      return await c.fb.runTransaction(c.db, async function (tx) {
+        const ref = gameRef(c, gameId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('Game not found.');
+        const gen = snap.data().generating;
+        const now = Date.now();
+        if (gen && gen.uid && gen.uid !== c.uid && gen.ts && (now - gen.ts) < TURN_TTL) {
+          return { ok: false, holder: gen.name || 'another player' };
+        }
+        tx.update(ref, { generating: { uid: c.uid, name: name || 'A player', ts: now } });
+        return { ok: true };
+      });
+    },
+    /* Release the lock (only if we hold it). Best-effort. */
+    releaseTurn: async function (gameId) {
+      try {
+        const c = ctx();
+        await c.fb.runTransaction(c.db, async function (tx) {
+          const ref = gameRef(c, gameId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const gen = snap.data().generating;
+          if (!gen || gen.uid === c.uid) tx.update(ref, { generating: null });
+        });
+      } catch (e) { console.warn('[AI GM] releaseTurn failed', e); }
+    },
+    /* Who (if anyone) currently holds the lock, ignoring stale locks. Returns a
+     * display name or null. */
+    turnHolder: function (meta, myUid) {
+      const gen = meta && meta.generating;
+      if (gen && gen.uid && gen.uid !== myUid && gen.ts && (Date.now() - gen.ts) < TURN_TTL) {
+        return gen.name || 'another player';
+      }
+      return null;
+    },
+    turnTtl: TURN_TTL
   };
 })();

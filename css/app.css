@@ -255,6 +255,13 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 .msg-player.msg-other .msg-bubble { background: var(--bg2); opacity: 0.92; }
 .msg-player.msg-other .msg-author { color: var(--dim); }
 
+/* "GM is responding to …" — the shared turn lock indicator above the composer */
+.mp-status {
+  font-family: var(--mono); font-size: 12px; color: var(--accent);
+  padding: 6px 10px; margin: 0 0 6px; text-align: center;
+  background: var(--bg2); border: 1px solid var(--line-soft); border-radius: 8px;
+}
+
 /* ---------- forms / modal / toast ---------- */
 .form-row { display: grid; gap: 5px; margin: 12px 0; }
 .form-row > span { font-size: 13px; color: var(--dim); letter-spacing: 0.04em; text-transform: uppercase; font-family: var(--mono); }

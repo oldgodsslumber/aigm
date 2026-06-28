@@ -55,8 +55,11 @@ const Context = (function () {
   };
 
   function protocolPrompt(opts) {
+    const intro = opts.multiplayer
+      ? 'You are the Game Master running a tabletop RPG session for a GROUP of players, each controlling their OWN character (the PARTY, listed below). Narrate to the party in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the players can act on. Each player\'s message is prefixed with their character\'s name (e.g. "Kestrel: I kick the door in"); respond to that character\'s action, address them by name, and keep every party member\'s situation consistent. NEVER narrate any player character\'s decisions, dialogue, or feelings for them.'
+      : 'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.';
     return [
-      'You are the Game Master running a solo tabletop RPG session for one player. Narrate in second person, present tense. Play all NPCs. Keep replies vivid but tight — usually 80 to 250 words — and end on something the player can act on. Never narrate the player character\'s decisions, dialogue, or feelings for them.',
+      intro,
       '',
       'PACING OPEN-ENDED ACTIONS — When the player declares a broad action that spans several people, places, or steps (e.g. "I question everyone in the room", "I search the whole house"), do NOT resolve it all at once. Play out ONE beat — one person, one room, one step — then stop and explicitly offer the next, ending with a concrete prompt (e.g. "The maid finishes her account. Do you turn to the butler next, or press her further?"). Keep the player in the driver\'s seat for each step rather than fast-forwarding through the group.',
       '',
@@ -335,12 +338,25 @@ const Context = (function () {
       used += est(rules);
     }
 
-    /* character bio — who the player is, in their own words */
+    /* character bio — who the player is, in their own words. In multiplayer the
+     * PARTY block below covers every character (including this one), so skip the
+     * standalone bio to avoid duplicating the acting player's description. */
     const bioText = opts.character && opts.character.description && String(opts.character.description).trim();
-    if (bioText) {
+    if (bioText && !opts.multiplayer) {
       const bio = 'WHO THIS CHARACTER IS (the player\'s own words):\n' + bioText;
       parts.push(bio);
       used += est(bio);
+    }
+
+    /* the party — every player character, so the GM knows the whole group and
+     * who is acting this turn. Each is controlled by a different person. */
+    if (opts.multiplayer && opts.party && opts.party.length) {
+      const lines = opts.party.map(function (p) {
+        return '- ' + p.name + (p.isMe ? ' (taking this turn)' : '') + (p.description ? ': ' + p.description : '');
+      });
+      const party = 'THE PARTY (each character is controlled by a different player — all are protagonists; never speak, decide, or act for any of them):\n' + lines.join('\n');
+      parts.push(party);
+      used += est(party);
     }
 
     /* carried-over recap — when this character continues from a previous story,
@@ -455,9 +471,13 @@ const Context = (function () {
     for (let i = source.length - 1; i >= 0; i--) {
       const m = source[i];
       if (m.role === 'divider') continue;
-      const c = est(m.content) + 4;
+      /* in multiplayer, prefix each player turn with the acting character's name
+       * so the GM can tell who did what (one shared transcript, many players) */
+      let content = m.content;
+      if (opts.multiplayer && m.role === 'player' && m.authorName) content = m.authorName + ': ' + content;
+      const c = est(content) + 4;
       if (c > msgRoom && msgs.length >= 4) break;
-      msgs.unshift({ role: toLLMRole(m), content: m.content });
+      msgs.unshift({ role: toLLMRole(m), content: content });
       msgRoom -= c;
       if (msgs.length >= 60) break;
     }

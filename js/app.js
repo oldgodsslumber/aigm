@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260628b';
+const BUILD = '20260628c';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — multiplayer lobbies (Phase A+B): shared games, 4-digit codes, realtime', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — multiplayer Phase C: GM turn lock, party context, host-only controls', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();
