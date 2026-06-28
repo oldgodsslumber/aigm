@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260627a';
+const BUILD = '20260627b';
 
 const Modal = (function () {
   let root = null;
@@ -90,12 +90,17 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — end-scene epilogue, auto-close (no synopsis review)', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — local/cloud per-game storage (Firestore)', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();
 
   window.addEventListener('hashchange', function () { Router.go(); });
+
+  /* Firebase (loaded as a module) calls this when sign-in/out resolves: the
+   * cloud backend has just been attached/detached and the cloud index primed,
+   * so re-render the current view to show cloud games and updated auth UI. */
+  window.AIGM_onAuth = function () { if (window.Router) Router.go(); };
 
   if (!Store.profile()) {
     const nameInp = h('input', { type: 'text', placeholder: 'Your name', autocomplete: 'off' });

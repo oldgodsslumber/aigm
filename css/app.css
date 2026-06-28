@@ -208,6 +208,26 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   border-radius: 6px;
 }
 .card-del:hover { color: var(--bad); background: var(--bg3); }
+/* move-between-backends button sits just left of the delete × */
+.card-move {
+  position: absolute;
+  top: 8px; right: 40px;
+  background: none; border: none;
+  color: var(--faint);
+  font-family: var(--mono); font-size: 12px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.card-move:hover { color: var(--accent); background: var(--bg3); }
+/* storage badge on each campaign card */
+.store-badge {
+  display: inline-block; margin-bottom: 6px;
+  font-size: 11px; line-height: 1; padding: 3px 7px;
+  border-radius: 99px; border: 1px solid var(--line-soft); color: var(--dim);
+}
+.store-badge.cloud { color: var(--accent); border-color: var(--accent); opacity: 0.9; }
+.chip.disabled { opacity: 0.45; cursor: not-allowed; }
 
 /* ---------- forms / modal / toast ---------- */
 .form-row { display: grid; gap: 5px; margin: 12px 0; }

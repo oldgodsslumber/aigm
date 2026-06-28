@@ -288,6 +288,30 @@ Views.settings = async function (root) {
     h('p', { class: 'sf-hint' }, driveSttNote),
     h('p', { class: 'sf-hint' }, 'Please keep your eyes on the road — set up voice and speed under Read-aloud voice above, and only glance at the screen when stopped.'));
 
+  /* ---- cloud sync (Google sign-in) ---- */
+  const cloudAvail = !!(window.AIGMAuth && window.AIGMAuth.available);
+  const cloudUser = cloudAvail ? window.AIGMAuth.user() : null;
+  const cloudBtn = h('button', { class: 'btn' + (cloudUser ? '' : ' accent') },
+    cloudUser ? 'Sign out' : 'Sign in with Google');
+  cloudBtn.addEventListener('click', async function () {
+    cloudBtn.disabled = true;
+    try {
+      if (cloudUser) await window.AIGMAuth.signOut();
+      else await window.AIGMAuth.signIn();
+      /* AIGM_onAuth re-renders this view once auth resolves */
+    } catch (e) { console.error(e); Toast('Sign-in failed: ' + (e.message || e)); cloudBtn.disabled = false; }
+  });
+  const cloudStatus = h('p', { class: 'card-sub' }, cloudUser
+    ? 'Signed in as ' + (cloudUser.displayName || cloudUser.email) + '. New games can be saved to the cloud, and you can move existing games between this device and the cloud from the Campaigns screen.'
+    : (cloudAvail
+      ? 'Not signed in. Sign in to save games to the cloud and play them on any device. Your existing local games are untouched until you choose to move them.'
+      : 'Connecting to the cloud… if this persists, check your connection.'));
+  const cloudCard = h('section', { class: 'settings-card' },
+    h('h2', null, 'Cloud sync'),
+    cloudStatus,
+    h('p', { class: 'sf-hint' }, 'Game data (transcripts, characters, wiki) syncs to your private Firebase space. Your Gemini API key is never synced — it stays in this browser only.'),
+    h('div', { class: 'inline-pair' }, cloudBtn));
+
   /* backup */
   const exportBtn = h('button', { class: 'btn' }, 'Export data');
   exportBtn.addEventListener('click', function () {
@@ -321,11 +345,12 @@ Views.settings = async function (root) {
       h('h2', null, 'Per-campaign backend'),
       h('p', { class: 'card-sub' }, 'Override the global backend for individual campaigns.'),
       overrides) : null,
+    cloudCard,
     ttsCard,
     driveCard,
     h('section', { class: 'settings-card' },
       h('h2', null, 'Data'),
-      h('p', { class: 'card-sub' }, 'Everything lives in this browser until Firebase is wired up. Export a backup before clearing site data.'),
+      h('p', { class: 'card-sub' }, 'Local games live in this browser; cloud games live in your Firebase account. Export backs up your local games — do it before clearing site data.'),
       h('div', { class: 'inline-pair' }, exportBtn, importBtn, importInp)),
     h('div', { class: 'settings-save' }, save)
   ));

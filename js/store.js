@@ -1,16 +1,20 @@
-/* AI GM — storage adapter.
+/* AI GM — storage adapters.
  *
- * This is the localStorage implementation. The API is intentionally
- * Firestore-shaped: every method is async, documents carry ids, and
- * subcollections hang off a campaign id. To move to Firebase later,
- * reimplement this module against Firestore with the same signatures
- * (and wire Store.on(...) to onSnapshot for 'transcript' and 'sheet').
+ * Two interchangeable backends implement the SAME async, Firestore-shaped API
+ * (documents carry ids; subcollections hang off a campaign id):
+ *   - LocalStore  — this file, backed by localStorage.
+ *   - CloudStore  — js/store-cloud.js, backed by Firestore (attached at runtime).
+ *
+ * The `Store` façade at the bottom routes every call to the right backend per
+ * game (via an index of cid -> 'local' | 'cloud'), so the views keep calling
+ * Store.addMessage(cid, ...) exactly as before. A game's home is chosen when
+ * it's created and can be changed later with a manual Move.
  *
  * Data model mirrors the spec:
  *   packs/{packId}
  *   campaigns/{id} + subcollections: characters, sheetLog, scenes, transcript, wiki
  */
-const Store = (function () {
+const LocalStore = (function () {
   const KEY = 'aigm:db';
   let db = null;
   const listeners = {};
@@ -302,6 +306,174 @@ const Store = (function () {
       if (!parsed || typeof parsed !== 'object' || !parsed.campaigns) throw new Error('Not an AI GM backup file.');
       db = parsed; persist();
     }
+  };
+})();
+
+/* Store — the façade the rest of the app talks to.
+ *
+ * It owns a tiny index (cid -> 'local' | 'cloud') kept in localStorage so a
+ * cold deep-link to #/play/:cid can resolve a game's backend synchronously,
+ * before any list call runs. listCampaigns() refreshes the index from each
+ * live adapter and tags every campaign with `_backend` for the UI badge.
+ *
+ * Phase 0 (current): only LocalStore is attached, so every game routes local
+ * and behavior is identical to before. Phase 1 calls Store.attachCloud(...)
+ * once Firebase is configured and the user signs in.
+ */
+const Store = (function () {
+  const IDX_KEY = 'aigm:index';
+  const adapters = { local: LocalStore, cloud: null };
+  let index = {};
+
+  function loadIndex() {
+    try { index = JSON.parse(localStorage.getItem(IDX_KEY)) || {}; } catch (e) { index = {}; }
+    if (!index || typeof index !== 'object') index = {};
+  }
+  function saveIndex() { localStorage.setItem(IDX_KEY, JSON.stringify(index)); }
+  /* Resolve a game's backend; fall back to local for unknown ids or for a
+   * 'cloud' game seen before sign-in (the cloud adapter isn't attached yet). */
+  function backendOf(cid) { return adapters[index[cid]] ? index[cid] : 'local'; }
+  function adapterFor(cid) { return adapters[backendOf(cid)] || adapters.local; }
+  function liveAdapters() { return Object.keys(adapters).filter(function (k) { return adapters[k]; }); }
+  function byRecent(a, b) { return (b.lastPlayedAt || b.createdAt || 0) - (a.lastPlayedAt || a.createdAt || 0); }
+
+  return {
+    init: function () { loadIndex(); LocalStore.init(); },
+    /* Phase 1: hand the façade a live CloudStore (after Firebase auth). Passing
+     * null detaches it (sign-out) so cloud games fall back to local routing. */
+    attachCloud: function (cloud) { adapters.cloud = cloud; if (cloud && cloud.init) cloud.init(); },
+    isCloudReady: function () { return !!adapters.cloud; },
+    backendOf: backendOf,
+    newId: function () { return LocalStore.newId(); },
+
+    on: function (type, cb) {
+      const offs = liveAdapters().map(function (k) { return adapters[k].on(type, cb); });
+      return function () { offs.forEach(function (off) { if (off) off(); }); };
+    },
+
+    /* profile / auth — Phase 0 local; Phase 1 overlays the Firebase user */
+    profile: function () { return LocalStore.profile(); },
+    setProfile: function (p) { return LocalStore.setProfile(p); },
+    uid: function () { return LocalStore.uid(); },
+
+    /* packs — Phase 0 local only */
+    listPacks: function () { return LocalStore.listPacks(); },
+    getPack: function (id) { return LocalStore.getPack(id); },
+    savePack: function (p) { return LocalStore.savePack(p); },
+    deletePack: function (id) { return LocalStore.deletePack(id); },
+
+    /* campaigns */
+    listCampaigns: async function () {
+      const out = [];
+      for (const k of liveAdapters()) {
+        const list = await adapters[k].listCampaigns();
+        list.forEach(function (c) { c._backend = k; index[c.id] = k; out.push(c); });
+      }
+      saveIndex();
+      return out.sort(byRecent);
+    },
+    getCampaign: function (id) { return adapterFor(id).getCampaign(id); },
+    lastCampaignId: function () { return LocalStore.lastCampaignId(); },
+    /* New games may carry `_backend` from the create picker; existing games
+     * route by the index. The hint is stripped before it reaches an adapter. */
+    saveCampaign: async function (m) {
+      const backend = (m && m._backend) || (m && m.id && index[m.id]) || 'local';
+      const ad = adapters[backend] || adapters.local;
+      const clean = Object.assign({}, m); delete clean._backend;
+      const id = await ad.saveCampaign(clean);
+      index[id] = backend; saveIndex();
+      return id;
+    },
+    deleteCampaign: async function (id) {
+      const r = await adapterFor(id).deleteCampaign(id);
+      delete index[id]; saveIndex();
+      return r;
+    },
+    touch: function (cid) { return adapterFor(cid).touch(cid); },
+
+    /* Move a whole game between backends: copy the meta, every subcollection,
+     * and the referenced library character (so the game stays self-contained),
+     * then delete the source. Routing is flipped BEFORE the source delete, so a
+     * mid-move failure leaves the destination copy reachable rather than orphaning
+     * the game. The single save-point does NOT travel — make a fresh one after. */
+    moveCampaign: async function (cid, target) {
+      const from = backendOf(cid);
+      if (from === target) return cid;
+      const src = adapters[from], dst = adapters[target];
+      if (!src) throw new Error('This game\'s storage is unavailable.');
+      if (!dst) throw new Error('Sign in with Google first to use cloud storage.');
+      const meta = await src.getCampaign(cid);
+      if (!meta) throw new Error('Game not found.');
+      if (meta.characterId) {
+        const lib = await src.getLibChar(meta.characterId);
+        if (lib) await dst.saveLibChar(lib);
+      }
+      const cleanMeta = Object.assign({}, meta);
+      delete cleanMeta._backend; delete cleanMeta.checkpoint;
+      await dst.saveCampaign(cleanMeta);
+      for (const ch of await src.listCharacters(cid)) await dst.saveCharacter(cid, ch);
+      for (const ev of await src.listSheetEvents(cid)) await dst.addSheetEvent(cid, ev);
+      for (const sc of await src.listScenes(cid)) await dst.saveScene(cid, sc);
+      for (const m of await src.listMessages(cid)) await dst.addMessage(cid, m);
+      for (const w of await src.listWiki(cid)) await dst.saveWiki(cid, w);
+      index[cid] = target; saveIndex();
+      await src.deleteCampaign(cid);
+      return cid;
+    },
+    /* Ensure a game's library character also exists in a non-local backend, so a
+     * cloud game can save character progress without the local library present
+     * (e.g. on another device). Local is the authoring home and always has it. */
+    ensureLibCharOn: async function (backend, charId) {
+      const dst = adapters[backend];
+      if (!dst || backend === 'local' || !charId) return;
+      const lib = await adapters.local.getLibChar(charId);
+      if (lib) await dst.saveLibChar(lib);
+    },
+
+    /* character library + per-story progress — Phase 0 local */
+    listLibChars: function () { return LocalStore.listLibChars(); },
+    getLibChar: function (id) { return LocalStore.getLibChar(id); },
+    saveLibChar: function (ch) { return LocalStore.saveLibChar(ch); },
+    deleteLibChar: function (id) { return LocalStore.deleteLibChar(id); },
+    storiesForChar: function (id) { return LocalStore.storiesForChar(id); },
+    saveCharacterProgress: function (cid) { return adapterFor(cid).saveCharacterProgress(cid); },
+
+    /* characters (campaign-scoped) */
+    listCharacters: function (cid) { return adapterFor(cid).listCharacters(cid); },
+    getCharacter: function (cid, chid) { return adapterFor(cid).getCharacter(cid, chid); },
+    saveCharacter: function (cid, ch) { return adapterFor(cid).saveCharacter(cid, ch); },
+
+    /* sheet log */
+    addSheetEvent: function (cid, ev) { return adapterFor(cid).addSheetEvent(cid, ev); },
+    listSheetEvents: function (cid) { return adapterFor(cid).listSheetEvents(cid); },
+    updateSheetEvent: function (cid, ev) { return adapterFor(cid).updateSheetEvent(cid, ev); },
+
+    /* scenes */
+    listScenes: function (cid) { return adapterFor(cid).listScenes(cid); },
+    getScene: function (cid, sid) { return adapterFor(cid).getScene(cid, sid); },
+    saveScene: function (cid, sc) { return adapterFor(cid).saveScene(cid, sc); },
+
+    /* transcript */
+    listMessages: function (cid) { return adapterFor(cid).listMessages(cid); },
+    addMessage: function (cid, msg) { return adapterFor(cid).addMessage(cid, msg); },
+    updateMessage: function (cid, msg) { return adapterFor(cid).updateMessage(cid, msg); },
+    deleteMessage: function (cid, id) { return adapterFor(cid).deleteMessage(cid, id); },
+    truncateFrom: function (cid, id) { return adapterFor(cid).truncateFrom(cid, id); },
+
+    /* wiki */
+    listWiki: function (cid) { return adapterFor(cid).listWiki(cid); },
+    getWiki: function (cid, eid) { return adapterFor(cid).getWiki(cid, eid); },
+    saveWiki: function (cid, e) { return adapterFor(cid).saveWiki(cid, e); },
+
+    /* checkpoints */
+    saveCheckpoint: function (cid, label) { return adapterFor(cid).saveCheckpoint(cid, label); },
+    getCheckpoint: function (cid) { return adapterFor(cid).getCheckpoint(cid); },
+    restoreCheckpoint: function (cid) { return adapterFor(cid).restoreCheckpoint(cid); },
+    clearCheckpoint: function (cid) { return adapterFor(cid).clearCheckpoint(cid); },
+
+    /* backup — whole-localStorage export/import (local home) */
+    exportAll: function () { return LocalStore.exportAll(); },
+    importAll: function (json) { return LocalStore.importAll(json); }
   };
 })();
 

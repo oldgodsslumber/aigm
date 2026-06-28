@@ -81,14 +81,20 @@ Views.campaigns = async function (root, openCreateCharId) {
     for (const c of campaigns) {
       const chars = await Store.listCharacters(c.id);
       const pc = chars.find(function (x) { return !x.isNPC; });
+      const onCloud = c._backend === 'cloud';
       const card = h('a', { class: 'campaign-card', href: '#/play/' + c.id },
+        h('span', { class: 'store-badge ' + (onCloud ? 'cloud' : 'local'),
+          title: onCloud ? 'Saved in the cloud' : 'Saved on this device' }, onCloud ? '☁' : '💾'),
         h('h2', null, c.name),
         h('p', { class: 'card-sub' }, pc ? pc.name : 'No character'),
         h('p', { class: 'card-meta' }, c.lastPlayedAt ? 'Last played ' + fmtTime(c.lastPlayedAt) : 'Never played')
       );
+      const move = h('button', { class: 'card-move', 'aria-label': 'Move ' + c.name,
+        title: onCloud ? 'Move to this device' : 'Move to the cloud' }, onCloud ? '☁→💾' : '💾→☁');
+      move.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); confirmMove(c, onCloud); });
       const del = h('button', { class: 'card-del', 'aria-label': 'Delete ' + c.name, title: 'Delete campaign' }, '×');
       del.addEventListener('click', function (e) { e.preventDefault(); e.stopPropagation(); confirmDelete(c); });
-      card.append(del);
+      card.append(move, del);
       grid.append(card);
     }
     wrap.append(grid);
@@ -137,6 +143,31 @@ Views.campaigns = async function (root, openCreateCharId) {
     if (nameInp) { nameInp.focus(); nameInp.select(); }
   }
 
+  function confirmMove(c, onCloud) {
+    const target = onCloud ? 'local' : 'cloud';
+    if (target === 'cloud' && !(Store.isCloudReady && Store.isCloudReady())) {
+      Toast('Sign in with Google under Settings → Cloud sync first.');
+      return;
+    }
+    const dest = onCloud ? 'this device' : 'the cloud';
+    const btn = h('button', { class: 'btn accent' }, 'Move to ' + dest);
+    btn.addEventListener('click', async function () {
+      btn.disabled = true; btn.textContent = 'Moving…';
+      try {
+        await Store.moveCampaign(c.id, target);
+        Modal.close();
+        Toast('“' + c.name + '” moved to ' + dest + '.');
+        Views.campaigns(root);
+      } catch (e) { console.error(e); Toast('Move failed: ' + e.message); btn.disabled = false; btn.textContent = 'Move to ' + dest; }
+    });
+    Modal.open(h('div', null,
+      h('h2', null, 'Move “' + c.name + '”?'),
+      h('p', null, 'This copies the whole game — transcript, characters, wiki, scenes, and its character — to ' + dest + ', then removes the original copy.'),
+      h('p', { class: 'card-sub' }, 'Your one save-point doesn\'t travel; make a fresh one afterward if you want a rollback point.'),
+      h('div', { class: 'modal-actions' },
+        h('button', { class: 'btn', onclick: Modal.close }, 'Cancel'), btn)));
+  }
+
   function confirmDelete(c) {
     /* Hard delete with type-the-name confirm — the one destructive act in the app. */
     const inp = h('input', { type: 'text', placeholder: c.name, autocomplete: 'off' });
@@ -165,6 +196,28 @@ Views.campaigns = async function (root, openCreateCharId) {
     if (presetCharId && typeof presetCharId !== 'string') presetCharId = null;
     const libChars = await Store.listLibChars();
     const nameInp = h('input', { type: 'text', placeholder: 'e.g. The Hollow Ford Debt' });
+
+    /* ---- where to save this game: local browser or the cloud ---- */
+    let saveLocation = 'local';
+    const cloudReady = Store.isCloudReady && Store.isCloudReady();
+    const locLocal = h('button', { class: 'chip on', type: 'button' }, '💾 This device');
+    const locCloud = h('button', { class: 'chip' + (cloudReady ? '' : ' disabled'), type: 'button',
+      title: cloudReady ? 'Save in the cloud — playable on your other devices' : 'Sign in with Google (Settings → Cloud sync) to enable' }, '☁ Cloud');
+    function syncLoc() {
+      locLocal.classList.toggle('on', saveLocation === 'local');
+      locCloud.classList.toggle('on', saveLocation === 'cloud');
+    }
+    locLocal.addEventListener('click', function () { saveLocation = 'local'; syncLoc(); });
+    locCloud.addEventListener('click', function () {
+      if (!cloudReady) { Toast('Sign in with Google under Settings → Cloud sync to save games in the cloud.'); return; }
+      saveLocation = 'cloud'; syncLoc();
+    });
+    const locSection = h('div', { class: 'create-section' },
+      h('h3', null, 'Where to save'),
+      h('p', { class: 'card-sub' }, cloudReady
+        ? 'Keep this game on this device, or save it to the cloud so you can play it on your phone and computer. You can move it later.'
+        : 'This game stays on this device. Sign in with Google (Settings → Cloud sync) to unlock cloud saves you can play anywhere.'),
+      h('div', { class: 'chip-row' }, locLocal, locCloud));
 
     /* play format — one-shot / multi-shot / campaign (shapes the threat plan) */
     const format = formatPicker('campaign');
@@ -281,8 +334,12 @@ Views.campaigns = async function (root, openCreateCharId) {
         premise: premiseTa.value.trim(), boundaries: boundsTa.value.trim(),
         rulesNotes: rulesTa.value.trim(),
         characterId: libChar.id, recap: libChar.storySoFar || '',
-        settings: {}, currentSceneId: null, createdAt: Date.now()
+        settings: {}, currentSceneId: null, createdAt: Date.now(),
+        _backend: saveLocation
       });
+      /* a cloud game needs its library character in the cloud too, so progress
+       * can be saved from any device (local stays the authoring home) */
+      if (saveLocation === 'cloud') await Store.ensureLibCharOn('cloud', libChar.id);
       /* per-story copy of the PC, seeded from the library character and linked
        * back to it so progress can be saved later */
       await Store.saveCharacter(cid, {
@@ -323,6 +380,7 @@ Views.campaigns = async function (root, openCreateCharId) {
     Modal.open(h('div', { class: 'create-campaign' },
       h('h2', null, 'New campaign'),
       h('label', { class: 'form-row' }, h('span', null, 'Campaign name'), nameInp),
+      locSection,
       h('div', { class: 'create-section' },
         h('h3', null, 'Play format'),
         h('p', { class: 'card-sub' }, 'How big is the story? This shapes the villain’s countdown — how urgent and far-reaching their plan is.'),
