@@ -122,6 +122,8 @@ Views.play = async function (root, cid) {
       input, sendBtn),
     jumpBtn,
     drive ? driveBar : null);
+  /* multiplayer party roster + lobby controls (filled by updateRoster) */
+  const mpBar = isMP ? h('div', { class: 'mp-bar' }) : null;
   play.append(
     h('header', { class: 'scene-bar' },
       h('div', { class: 'scene-bar-left' },
@@ -134,6 +136,7 @@ Views.play = async function (root, cid) {
         (!isMP || MP.isHost(campaign)) ? restoreBtn : null,
         (!isMP || MP.isHost(campaign)) ? savePointBtn : null,
         (!isMP || MP.isHost(campaign)) ? endSceneBtn : null)),
+    mpBar,
     h('div', { class: 'play-body' }, chatZone));
   root.append(play);
 
@@ -278,12 +281,44 @@ Views.play = async function (root, cid) {
   }
 
   let mpHoldsLock = false; /* whether THIS client currently holds the shared GM turn lock */
+  let hbTimer = null;      /* heartbeat that keeps our lock fresh during a long turn */
   function setBusy(b) {
     busy = b;
     sendBtn.disabled = b;
     input.disabled = b;
     renderLog();
   }
+  /* Party roster + lobby code/lock controls (host can lock/reopen). Rebuilt on
+   * each header render, so it reflects players joining live via the watch. */
+  async function updateRoster() {
+    if (!isMP || !mpBar) return;
+    const pcs = (await Store.listCharacters(cid)).filter(function (c) { return !c.isNPC; });
+    mpBar.innerHTML = '';
+    mpBar.append(h('span', { class: 'mp-bar-label' }, 'Party'));
+    pcs.forEach(function (c) {
+      const isHostChar = campaign.hostUid && c.ownerUid === campaign.hostUid;
+      mpBar.append(h('span', { class: 'mp-member' + (c.ownerUid === myUid ? ' me' : '') },
+        (isHostChar ? '👑 ' : '') + c.name));
+    });
+    const open = campaign.status !== 'locked';
+    mpBar.append(h('span', { class: 'mp-spacer' }));
+    mpBar.append(h('span', { class: 'mp-code', title: 'Share this code to invite players' }, 'Code ' + (campaign.code || '----')));
+    if (MP.isHost(campaign)) {
+      const lockBtn = h('button', { class: 'btn small ghost' }, open ? 'Lock lobby' : 'Reopen lobby');
+      lockBtn.addEventListener('click', async function () {
+        lockBtn.disabled = true;
+        try {
+          await MP.setStatus(cid, open ? 'locked' : 'open');
+          campaign = await Store.getCampaign(cid);
+          updateRoster();
+        } catch (e) { Toast('Could not change the lobby: ' + e.message); lockBtn.disabled = false; }
+      });
+      mpBar.append(lockBtn);
+    } else {
+      mpBar.append(h('span', { class: 'mp-status-tag' }, open ? 'Lobby open' : 'Lobby locked'));
+    }
+  }
+
   /* Reflect the shared GM lock: when another player is mid-turn, show who and
    * block sending until they're done (the realtime watch refreshes campaign). */
   function updateMpStatus() {
@@ -397,6 +432,8 @@ Views.play = async function (root, cid) {
         return;
       }
       mpHoldsLock = true;
+      clearInterval(hbTimer);
+      hbTimer = setInterval(function () { MP.heartbeat(cid); }, 45000);
     }
     input.value = '';
     clearDraft();
@@ -407,7 +444,7 @@ Views.play = async function (root, cid) {
     messages = await Store.listMessages(cid);
     renderLog();
     if (isMP) {
-      runTurn(0).finally(function () { mpHoldsLock = false; MP.releaseTurn(cid); });
+      runTurn(0).finally(function () { mpHoldsLock = false; clearInterval(hbTimer); MP.releaseTurn(cid); });
     } else {
       runTurn(0);
     }
@@ -775,6 +812,7 @@ Views.play = async function (root, cid) {
   function renderHeader() {
     sceneTitleEl.textContent = scene.title + (scene.status === 'active' ? '' : ' (closed)');
     updateMpStatus();
+    updateRoster();
     pinsEl.innerHTML = '';
     (scene.pinnedEntryIds || []).forEach(async function (id) {
       const e = await Store.getWiki(cid, id);
@@ -953,6 +991,9 @@ Views.play = async function (root, cid) {
       }
       if (m.content.indexOf('SYSTEM: The player is ready') === 0) {
         return h('div', { class: 'msg msg-info' }, '— The story begins —');
+      }
+      if (m.content.indexOf('SYSTEM:') === 0 && m.content.indexOf('has joined the party') >= 0) {
+        return h('div', { class: 'msg msg-info' }, '— ' + m.content.replace(/^SYSTEM:\s*/, '').split('.')[0] + ' —');
       }
       return h('div', { class: 'msg msg-info' }, m.content);
     }

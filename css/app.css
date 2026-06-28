@@ -262,6 +262,22 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   background: var(--bg2); border: 1px solid var(--line-soft); border-radius: 8px;
 }
 
+/* multiplayer party roster / lobby bar under the scene header */
+.mp-bar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 14px; border-bottom: 1px solid var(--line-soft);
+  background: var(--bg2); font-size: 13px;
+}
+.mp-bar-label { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--faint); }
+.mp-member {
+  padding: 2px 9px; border-radius: 99px;
+  border: 1px solid var(--line-soft); color: var(--dim);
+}
+.mp-member.me { color: var(--accent); border-color: var(--accent); }
+.mp-spacer { flex: 1 1 auto; }
+.mp-code { font-family: var(--mono); font-size: 12px; color: var(--dim); letter-spacing: .08em; }
+.mp-status-tag { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+
 /* ---------- forms / modal / toast ---------- */
 .form-row { display: grid; gap: 5px; margin: 12px 0; }
 .form-row > span { font-size: 13px; color: var(--dim); letter-spacing: 0.04em; text-transform: uppercase; font-family: var(--mono); }

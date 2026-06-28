@@ -105,7 +105,18 @@ window.MP = (function () {
       });
 
       await Store.addMembership(gameId);
-      if (!alreadyMember) await addPlayerChar(gameId, uid, libChar);
+      if (!alreadyMember) {
+        await addPlayerChar(gameId, uid, libChar);
+        /* drop a cue into the shared transcript so the GM works the newcomer
+         * into the current scene and the table sees them arrive */
+        try {
+          const meta = await Store.getCampaign(gameId);
+          await Store.addMessage(gameId, {
+            role: 'info', sceneId: meta && meta.currentSceneId, authorUid: uid,
+            content: 'SYSTEM: ' + libChar.name + ' has joined the party. Introduce them into the current scene when it fits.'
+          });
+        } catch (e) { console.warn('[AI GM] join announce failed', e); }
+      }
       return gameId;
     },
 
@@ -157,6 +168,20 @@ window.MP = (function () {
         tx.update(ref, { generating: { uid: c.uid, name: name || 'A player', ts: now } });
         return { ok: true };
       });
+    },
+    /* Keep our lock fresh during a long turn so others don't reclaim it as stale.
+     * No-op if we no longer hold it. */
+    heartbeat: async function (gameId) {
+      try {
+        const c = ctx();
+        await c.fb.runTransaction(c.db, async function (tx) {
+          const ref = gameRef(c, gameId);
+          const snap = await tx.get(ref);
+          if (!snap.exists()) return;
+          const gen = snap.data().generating;
+          if (gen && gen.uid === c.uid) tx.update(ref, { generating: { uid: c.uid, name: gen.name, ts: Date.now() } });
+        });
+      } catch (e) { /* best-effort */ }
     },
     /* Release the lock (only if we hold it). Best-effort. */
     releaseTurn: async function (gameId) {
