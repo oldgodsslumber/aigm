@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260628e';
+const BUILD = '20260628f';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — mobile sign-in via redirect (popup fallback)', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — sign-in popup-first (iOS/WebKit redirect workaround)', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();

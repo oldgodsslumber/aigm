@@ -33,13 +33,15 @@ const fb = {
   runTransaction, arrayUnion, arrayRemove
 };
 
-/* Mobile browsers routinely block or lose the sign-in popup, so use the
- * redirect flow there; keep the popup on desktop (no full-page reload) but fall
- * back to redirect if the popup is blocked or unsupported. */
-const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+/* Sign-in flow: prefer the POPUP everywhere. On iOS/WebKit (all iOS browsers,
+ * incl. Chrome) signInWithRedirect silently fails when the auth handler domain
+ * (authDomain) differs from the app domain — the page bounces to Google and
+ * returns with no session, because WebKit partitions the handler's storage. The
+ * popup posts the credential straight back to us, sidestepping that. Redirect is
+ * only a fallback for the rare environment where popups truly can't open. */
 function redirectIsBetter(e) {
   const s = (e && (e.code || e.message)) || '';
-  return /popup-blocked|popup-closed-by-user|cancelled-popup-request|operation-not-supported-in-this-environment|web-storage-unsupported/i.test(s);
+  return /popup-blocked|operation-not-supported-in-this-environment|web-storage-unsupported/i.test(s);
 }
 
 /* Auth + Firestore primitives the classic scripts reach via window. */
@@ -47,7 +49,6 @@ window.AIGMAuth = {
   available: true,
   signIn: async function () {
     const provider = new GoogleAuthProvider();
-    if (IS_MOBILE) return signInWithRedirect(auth, provider); // navigates away; resolves via getRedirectResult on return
     try { return await signInWithPopup(auth, provider); }
     catch (e) {
       if (redirectIsBetter(e)) return signInWithRedirect(auth, provider);
