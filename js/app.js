@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260628d';
+const BUILD = '20260628e';
 
 const Modal = (function () {
   let root = null;
@@ -90,7 +90,7 @@ const Router = (function () {
 
 /* ---------- boot ---------- */
 (async function boot() {
-  console.log('%c[AI GM] build ' + BUILD + ' — multiplayer Phase D: party roster, lobby lock, lock heartbeat, join cue', 'color:#9cc29c');
+  console.log('%c[AI GM] build ' + BUILD + ' — mobile sign-in via redirect (popup fallback)', 'color:#9cc29c');
   const bt = document.getElementById('build-tag');
   if (bt) bt.textContent = 'build ' + BUILD;
   Store.init();
@@ -101,6 +101,8 @@ const Router = (function () {
    * cloud backend has just been attached/detached and the cloud index primed,
    * so re-render the current view to show cloud games and updated auth UI. */
   window.AIGM_onAuth = function () { if (window.Router) Router.go(); };
+  /* surface a failed redirect sign-in (e.g. unauthorized domain) to the user */
+  window.AIGM_onAuthError = function (e) { Toast('Sign-in failed: ' + ((e && (e.message || e.code)) || 'unknown error')); };
 
   if (!Store.profile()) {
     const nameInp = h('input', { type: 'text', placeholder: 'Your name', autocomplete: 'off' });

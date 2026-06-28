@@ -12,7 +12,8 @@ import {
   runTransaction, arrayUnion, arrayRemove
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
-  getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
+  getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult,
+  signOut, onAuthStateChanged
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js';
 
 const firebaseConfig = {
@@ -32,13 +33,38 @@ const fb = {
   runTransaction, arrayUnion, arrayRemove
 };
 
+/* Mobile browsers routinely block or lose the sign-in popup, so use the
+ * redirect flow there; keep the popup on desktop (no full-page reload) but fall
+ * back to redirect if the popup is blocked or unsupported. */
+const IS_MOBILE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent);
+function redirectIsBetter(e) {
+  const s = (e && (e.code || e.message)) || '';
+  return /popup-blocked|popup-closed-by-user|cancelled-popup-request|operation-not-supported-in-this-environment|web-storage-unsupported/i.test(s);
+}
+
 /* Auth + Firestore primitives the classic scripts reach via window. */
 window.AIGMAuth = {
   available: true,
-  signIn: function () { return signInWithPopup(auth, new GoogleAuthProvider()); },
+  signIn: async function () {
+    const provider = new GoogleAuthProvider();
+    if (IS_MOBILE) return signInWithRedirect(auth, provider); // navigates away; resolves via getRedirectResult on return
+    try { return await signInWithPopup(auth, provider); }
+    catch (e) {
+      if (redirectIsBetter(e)) return signInWithRedirect(auth, provider);
+      throw e;
+    }
+  },
   signOut: function () { return signOut(auth); },
   user: function () { return auth.currentUser; }
 };
+
+/* Complete a pending redirect sign-in when the page reloads back from Google.
+ * onAuthStateChanged then fires with the signed-in user; this just surfaces
+ * any error (e.g. unauthorized domain) instead of failing silently. */
+getRedirectResult(auth).catch(function (e) {
+  console.warn('[AI GM] redirect sign-in failed', e);
+  if (window.AIGM_onAuthError) window.AIGM_onAuthError(e);
+});
 
 onAuthStateChanged(auth, async function (user) {
   if (user) {
