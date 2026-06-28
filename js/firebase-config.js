@@ -18,11 +18,13 @@ import {
 
 const firebaseConfig = {
   apiKey: 'AIzaSyD0wlV0M5JX0tu0JWL8AXKP7WyGZIRbans',
-  /* authDomain matches the Firebase Hosting domain we serve the app from, so the
-   * OAuth handler (/__/auth/handler) is SAME-ORIGIN as the app. This is required
-   * for sign-in to complete on iOS/WebKit. Load the app from this domain on
-   * mobile (https://aigm-cc686.web.app). */
-  authDomain: 'aigm-cc686.web.app',
+  /* Firebase Hosting serves this app on BOTH aigm-cc686.web.app AND
+   * aigm-cc686.firebaseapp.com. We use firebaseapp.com as authDomain because its
+   * /__/auth/handler is the redirect URI Google already authorized (web.app is
+   * not, which causes redirect_uri_mismatch). Loading the app from THIS domain
+   * makes the handler same-origin — required for sign-in on iOS/WebKit. So on
+   * mobile, open https://aigm-cc686.firebaseapp.com. */
+  authDomain: 'aigm-cc686.firebaseapp.com',
   projectId: 'aigm-cc686',
   storageBucket: 'aigm-cc686.firebasestorage.app',
   messagingSenderId: '97010491332',
