@@ -128,7 +128,9 @@ Views.campaigns = async function (root, openCreateCharId) {
     const exGrid = h('div', { class: 'card-grid' });
     examples.forEach(function (ex) {
       const card = h('button', { class: 'campaign-card example-card', type: 'button' },
-        h('span', { class: 'example-badge' }, 'Ready to play'),
+        h('span', { class: 'example-badges' },
+          h('span', { class: 'example-badge' }, 'Ready to play'),
+          h('span', { class: 'example-badge solo', title: 'These prepared adventures are built for one player' }, 'Single-player')),
         h('h2', null, ex.title),
         h('p', { class: 'card-sub' }, ex.tagline));
       card.addEventListener('click', function () { startExample(ex); });
@@ -136,7 +138,7 @@ Views.campaigns = async function (root, openCreateCharId) {
     });
     wrap.append(h('div', { class: 'examples-section' },
       h('h2', { class: 'section-title' }, 'Example adventures'),
-      h('p', { class: 'card-sub' }, 'Jump straight in — a full campaign with the cast, the wiki, and the villain\'s plan already prepared. You just name your character and play.'),
+      h('p', { class: 'card-sub' }, 'Jump straight in — a full campaign with the cast, the wiki, and the villain\'s plan already prepared. You just name your character and play. These are single-player only — to play with others, use “Host multiplayer” above.'),
       exGrid));
   }
   root.append(wrap);
