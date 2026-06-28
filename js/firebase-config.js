@@ -18,7 +18,11 @@ import {
 
 const firebaseConfig = {
   apiKey: 'AIzaSyD0wlV0M5JX0tu0JWL8AXKP7WyGZIRbans',
-  authDomain: 'aigm-cc686.firebaseapp.com',
+  /* authDomain matches the Firebase Hosting domain we serve the app from, so the
+   * OAuth handler (/__/auth/handler) is SAME-ORIGIN as the app. This is required
+   * for sign-in to complete on iOS/WebKit. Load the app from this domain on
+   * mobile (https://aigm-cc686.web.app). */
+  authDomain: 'aigm-cc686.web.app',
   projectId: 'aigm-cc686',
   storageBucket: 'aigm-cc686.firebasestorage.app',
   messagingSenderId: '97010491332',
