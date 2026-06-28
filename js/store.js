@@ -336,6 +336,9 @@ const Store = (function () {
   function adapterFor(cid) { return adapters[backendOf(cid)] || adapters.local; }
   function liveAdapters() { return Object.keys(adapters).filter(function (k) { return adapters[k]; }); }
   function byRecent(a, b) { return (b.lastPlayedAt || b.createdAt || 0) - (a.lastPlayedAt || a.createdAt || 0); }
+  /* The character library is global: it lives in the cloud whenever signed in
+   * (so every device shares one roster), else on this device. */
+  function libAd() { return adapters.cloud || adapters.local; }
 
   return {
     init: function () { loadIndex(); LocalStore.init(); },
@@ -430,13 +433,64 @@ const Store = (function () {
       if (lib) await dst.saveLibChar(lib);
     },
 
-    /* character library + per-story progress — Phase 0 local */
-    listLibChars: function () { return LocalStore.listLibChars(); },
-    getLibChar: function (id) { return LocalStore.getLibChar(id); },
-    saveLibChar: function (ch) { return LocalStore.saveLibChar(ch); },
-    deleteLibChar: function (id) { return LocalStore.deleteLibChar(id); },
-    storiesForChar: function (id) { return LocalStore.storiesForChar(id); },
-    saveCharacterProgress: function (cid) { return adapterFor(cid).saveCharacterProgress(cid); },
+    /* character library — cloud-home when signed in, else local. Lists merge
+     * both (cloud wins on id) so a roster is never hidden mid-migration. */
+    listLibChars: async function () {
+      if (!adapters.cloud) return adapters.local.listLibChars();
+      const both = await Promise.all([adapters.cloud.listLibChars(), adapters.local.listLibChars()]);
+      const byId = {};
+      both[1].forEach(function (c) { byId[c.id] = c; });   // local first
+      both[0].forEach(function (c) { byId[c.id] = c; });   // cloud overrides
+      return Object.values(byId).sort(byRecent);
+    },
+    getLibChar: async function (id) {
+      const c = await libAd().getLibChar(id);
+      if (c || !adapters.cloud) return c;
+      return adapters.local.getLibChar(id);   // not migrated yet — fall back
+    },
+    saveLibChar: function (ch) { return libAd().saveLibChar(ch); },
+    deleteLibChar: async function (id) {
+      await libAd().deleteLibChar(id);
+      if (adapters.cloud) { try { await adapters.local.deleteLibChar(id); } catch (e) {} }
+    },
+    /* a character's stories span both backends, so search the merged campaign list */
+    storiesForChar: async function (charId) {
+      const all = await this.listCampaigns();
+      return all.filter(function (c) { return c.characterId === charId; });
+    },
+    /* Snapshot the PC back onto its library character. Game data is read from
+     * the game's own backend; the library write goes to the library home, so
+     * this stays correct whether the game is local or cloud. */
+    saveCharacterProgress: async function (cid) {
+      const game = adapterFor(cid);
+      const c = await game.getCampaign(cid);
+      if (!c || !c.characterId) return null;
+      const lib = await this.getLibChar(c.characterId);
+      if (!lib) return null;
+      const chars = await game.listCharacters(cid);
+      const wiki = await game.listWiki(cid);
+      const scenes = await game.listScenes(cid);
+      const pc = chars.find(function (x) { return !x.isNPC; });
+      const pcWiki = wiki.find(function (e) { return !e.mergedInto && e.type === 'pc'; });
+      const recap = scenes.filter(function (s) { return s.status === 'closed' && s.summary; })
+        .sort(function (a, b) { return (a.startedAt || 0) - (b.startedAt || 0); })
+        .map(function (s) { return '— ' + (s.title || 'Scene') + ': ' + s.summary; }).join('\n');
+      if (pc && pc.description) lib.description = pc.description;
+      if (pcWiki && pcWiki.body) lib.condition = pcWiki.body;
+      if (recap) lib.storySoFar = recap;
+      lib.lastPlayedAt = Date.now(); lib.lastPlayedCampaignId = cid;
+      await this.saveLibChar(lib);
+      return lib;
+    },
+    /* On sign-in, lift this device's library characters into the cloud (those
+     * not already there) so the existing roster appears on every device. */
+    mirrorLibraryToCloud: async function () {
+      if (!adapters.cloud) return;
+      const both = await Promise.all([adapters.cloud.listLibChars(), adapters.local.listLibChars()]);
+      const have = {};
+      both[0].forEach(function (c) { have[c.id] = true; });
+      for (const c of both[1]) if (!have[c.id]) await adapters.cloud.saveLibChar(c);
+    },
 
     /* characters (campaign-scoped) */
     listCharacters: function (cid) { return adapterFor(cid).listCharacters(cid); },

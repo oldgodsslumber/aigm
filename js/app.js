@@ -1,5 +1,5 @@
 /* AI GM — shell: router, modal, toast, boot. */
-const BUILD = '20260627b';
+const BUILD = '20260627c';
 
 const Modal = (function () {
   let root = null;
@@ -116,7 +116,7 @@ const Router = (function () {
     Modal.open(h('div', null,
       h('h2', null, 'Welcome to AI GM'),
       h('p', null, 'A solo tabletop RPG, run by an AI Game Master that remembers your campaign — every NPC, every scene, every thread.'),
-      h('p', { class: 'card-sub' }, 'Everything is stored in this browser for now. Google sign-in arrives when Firebase is wired up; this name just labels your campaigns.'),
+      h('p', { class: 'card-sub' }, 'Games are stored on this device by default; sign in with Google under Settings → Cloud sync to save games to the cloud and play them anywhere. This name just labels your local games.'),
       h('label', { class: 'form-row' }, h('span', null, 'Name'), nameInp),
       h('div', { class: 'modal-actions' }, start)));
     setTimeout(function () { nameInp.focus(); }, 50);

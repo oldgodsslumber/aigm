@@ -39,7 +39,9 @@ window.AIGMAuth = {
 onAuthStateChanged(auth, async function (user) {
   if (user) {
     Store.attachCloud(window.makeCloudStore({ db: db, fb: fb, uid: user.uid }));
-    /* prime the cid -> backend index so a cold deep-link to a cloud game resolves */
+    /* lift this device's library into the cloud, then prime the cid -> backend
+     * index so a cold deep-link to a cloud game resolves */
+    try { await Store.mirrorLibraryToCloud(); } catch (e) { console.warn('[AI GM] library mirror failed', e); }
     try { await Store.listCampaigns(); } catch (e) { console.warn('[AI GM] cloud index prime failed', e); }
   } else {
     Store.attachCloud(null);
