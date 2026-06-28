@@ -1,28 +1,25 @@
-/* AI GM — CloudStore (Firestore backend), Phase 1.
+/* AI GM — CloudStore (Firestore backend).
  *
  * Same async, document-shaped API as LocalStore in store.js, so the Store
- * façade can route a game here transparently. Built but NOT loaded by
- * index.html yet — wire it in Phase 1 alongside js/firebase-config.js.
+ * façade can route a game here transparently.
  *
- * Construction (done by firebase-config.js on sign-in):
- *   const cloud = window.makeCloudStore({ db, fb, uid });
- *   Store.attachCloud(cloud);
- * where `fb` carries the Firestore modular fns:
- *   { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, onSnapshot }
- *
- * Layout (everything under the signed-in user — see firestore.rules):
- *   users/{uid}                                 profile { name }
- *   users/{uid}/packs/{id}
- *   users/{uid}/characters/{id}                 library characters
- *   users/{uid}/campaigns/{cid}                 META only (+ checkpoint meta field)
- *   users/{uid}/campaigns/{cid}/{sub}/{id}      sub in: characters sheetLog scenes transcript wiki
- *   users/{uid}/campaigns/{cid}/cp_{sub}/{id}   save-point mirror of each sub
+ * Two scopings, same code (the campaigns collection path is parameterized):
+ *   - User-scoped (solo cloud games + the cloud library), made with `uid`:
+ *       users/{uid}                              profile { name }
+ *       users/{uid}/packs|characters/{id}        library
+ *       users/{uid}/memberships/{gameId}         multiplayer games this user joined
+ *       users/{uid}/campaigns/{cid}              META (+ checkpoint meta) + /{sub}/{id}
+ *   - Shared (multiplayer), made with campaignsPath:['games']:
+ *       games/{gameId}                           META (members[], hostUid, code…) + /{sub}/{id}
  *
  * Each transcript/wiki/scene is its own small document, so no document nears
- * the 1 MiB limit and a transcript can grow without bound.
+ * the 1 MiB limit and a transcript can grow without bound. The shared scoping
+ * also exposes watch() for live onSnapshot updates across players.
  */
 window.makeCloudStore = function (ctx) {
   const db = ctx.db, fb = ctx.fb, uid = ctx.uid;
+  const cpath = ctx.campaignsPath || ['users', uid, 'campaigns']; // path to the campaigns collection
+  const tbase = uid ? ['users', uid] : null;                      // base for library/packs/profile
   const SUB = ['characters', 'sheetLog', 'scenes', 'transcript', 'wiki'];
   const BATCH_MAX = 450; // Firestore caps a writeBatch at 500 ops; stay safely under.
   const listeners = {};
@@ -36,13 +33,13 @@ window.makeCloudStore = function (ctx) {
   }
   function strip(o) { return JSON.parse(JSON.stringify(o)); } // drop undefined / functions
 
-  /* path helpers */
-  function userDoc() { return fb.doc(db, 'users', uid); }
-  function campDoc(cid) { return fb.doc(db, 'users', uid, 'campaigns', cid); }
-  function subColl(cid, sub) { return fb.collection(db, 'users', uid, 'campaigns', cid, sub); }
-  function subDoc(cid, sub, id) { return fb.doc(db, 'users', uid, 'campaigns', cid, sub, id); }
-  function topColl(name) { return fb.collection(db, 'users', uid, name); }
-  function topDoc(name, id) { return fb.doc(db, 'users', uid, name, id); }
+  /* path helpers — driven by cpath (campaigns) and tbase (user library/profile) */
+  function userDoc() { return fb.doc.apply(null, [db].concat(tbase)); }
+  function campDoc(cid) { return fb.doc.apply(null, [db].concat(cpath, [cid])); }
+  function subColl(cid, sub) { return fb.collection.apply(null, [db].concat(cpath, [cid, sub])); }
+  function subDoc(cid, sub, id) { return fb.doc.apply(null, [db].concat(cpath, [cid, sub, id])); }
+  function topColl(name) { return fb.collection.apply(null, [db].concat(tbase, [name])); }
+  function topDoc(name, id) { return fb.doc.apply(null, [db].concat(tbase, [name, id])); }
 
   async function listColl(coll) {
     const snap = await fb.getDocs(coll);
@@ -82,6 +79,22 @@ window.makeCloudStore = function (ctx) {
     profile: function () { return null; }, // façade keeps the synchronous local profile
     setProfile: async function (p) { await fb.setDoc(userDoc(), { name: p.name }, { merge: true }); },
     uid: function () { return uid; },
+
+    /* live updates: fire cb() whenever any part of a game changes. Used by the
+     * play view for multiplayer (and cross-device) so other players' messages,
+     * wiki edits, and scene changes appear without a manual refresh. */
+    watch: function (cid, cb) {
+      const onErr = function (e) { console.warn('[AI GM] watch error', e); };
+      const unsubs = SUB.map(function (sub) { return fb.onSnapshot(subColl(cid, sub), function () { cb(); }, onErr); });
+      unsubs.push(fb.onSnapshot(campDoc(cid), function () { cb(); }, onErr));
+      return function () { unsubs.forEach(function (u) { try { u(); } catch (e) {} }); };
+    },
+
+    /* multiplayer memberships (user-scoped only): which shared games this user
+     * has joined, so they resurface on every device they sign in on. */
+    listJoinedGames: async function () { return tbase ? listColl(topColl('memberships')) : []; },
+    addJoinedGame: async function (gameId) { if (tbase) await fb.setDoc(topDoc('memberships', gameId), { gameId: gameId, ts: Date.now() }); },
+    removeJoinedGame: async function (gameId) { if (tbase) await fb.deleteDoc(topDoc('memberships', gameId)); },
 
     /* packs */
     listPacks: async function () { return listColl(topColl('packs')); },

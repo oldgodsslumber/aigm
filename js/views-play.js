@@ -12,10 +12,15 @@ Views.play = async function (root, cid) {
   let lastTopId = null; /* reading mode: scroll to the TOP of each NEW reply, once, so it isn't spoiled */
   let pendingPlayer = null; /* { id, text } of a player move awaiting its first GM reply, so we can roll it back on error */
 
+  const isMP = !!(Store.isMultiplayer && Store.isMultiplayer(cid));
+  const myUid = window.FirebaseCtx && window.FirebaseCtx.uid;
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
     const chars = await Store.listCharacters(cid);
-    pc = chars.find(function (c) { return !c.isNPC; }) || chars[0];
+    /* In multiplayer, each player drives their OWN character (matched by uid);
+     * fall back to any PC if theirs isn't set up yet. */
+    pc = (isMP && chars.find(function (c) { return !c.isNPC && c.ownerUid === myUid; }))
+      || chars.find(function (c) { return !c.isNPC; }) || chars[0];
     scenes = await Store.listScenes(cid);
     scene = scenes.find(function (s) { return s.id === campaign.currentSceneId; });
     if (!scene) {
@@ -359,7 +364,9 @@ Views.play = async function (root, cid) {
     if (!text || busy) return;
     input.value = '';
     clearDraft();
-    const id = await Store.addMessage(cid, { role: 'player', content: text, sceneId: scene.id });
+    const pmsg = { role: 'player', content: text, sceneId: scene.id };
+    if (isMP) { pmsg.authorUid = myUid; pmsg.authorName = (pc && pc.name) || 'Player'; }
+    const id = await Store.addMessage(cid, pmsg);
     pendingPlayer = { id: id, text: text };
     messages = await Store.listMessages(cid);
     renderLog();
@@ -809,12 +816,17 @@ Views.play = async function (root, cid) {
 
   function renderMessage(m) {
     if (m.role === 'player') {
+      const mine = !isMP || m.authorUid === myUid;
       const actions = h('div', { class: 'msg-actions' });
-      const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
-      editBtn.addEventListener('click', function () { editPlayerMessage(m); });
-      actions.append(editBtn);
-      return h('div', { class: 'msg msg-player' },
+      /* only the author may edit their own move in a shared game */
+      if (mine) {
+        const editBtn = h('button', { class: 'btn small ghost' }, 'Edit');
+        editBtn.addEventListener('click', function () { editPlayerMessage(m); });
+        actions.append(editBtn);
+      }
+      return h('div', { class: 'msg msg-player' + (isMP && !mine ? ' msg-other' : '') },
         h('div', { class: 'msg-player-col' },
+          isMP && m.authorName ? h('span', { class: 'msg-author' }, m.authorName) : null,
           h('div', { class: 'msg-bubble', html: md(m.content) }),
           actions));
     }
@@ -968,4 +980,28 @@ Views.play = async function (root, cid) {
   renderRequestMeter();
   refreshSaveControls();
   if (keyMissing() && messages.length) showBanner('No Gemini API key set — add yours in Settings to play.', false);
+
+  /* Live updates: when the shared game changes under us (another player's move,
+   * a wiki edit, a scene change — or this game on another device), refresh and
+   * re-render. Only one watcher stays live across Play views; debounced so a
+   * burst of snapshot events collapses into a single reload. */
+  if (Views.play._unwatch) { Views.play._unwatch(); Views.play._unwatch = null; }
+  if (Store.isRealtime && Store.isRealtime(cid)) {
+    let pending = null;
+    const onRemoteChange = function () {
+      if (!document.body.contains(logEl)) { if (Views.play._unwatch) { Views.play._unwatch(); Views.play._unwatch = null; } return; }
+      clearTimeout(pending);
+      pending = setTimeout(async function () {
+        if (!document.body.contains(logEl)) return;
+        try {
+          campaign = await Store.getCampaign(cid);
+          scenes = await Store.listScenes(cid);
+          scene = scenes.find(function (s) { return s.id === campaign.currentSceneId; }) || scene;
+          messages = await Store.listMessages(cid);
+          renderHeader(); renderLog();
+        } catch (e) { console.warn('[AI GM] live refresh failed', e); }
+      }, 250);
+    };
+    Views.play._unwatch = Store.watch(cid, onRemoteChange);
+  }
 };

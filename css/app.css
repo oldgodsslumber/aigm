@@ -227,7 +227,30 @@ main { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
   border-radius: 99px; border: 1px solid var(--line-soft); color: var(--dim);
 }
 .store-badge.cloud { color: var(--accent); border-color: var(--accent); opacity: 0.9; }
+.store-badge.mp { color: var(--accent); border-color: var(--accent); opacity: 0.95; }
 .chip.disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* campaigns header: New / Host / Join buttons */
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* the big shareable lobby code */
+.lobby-code {
+  font-family: var(--mono); font-size: 44px; font-weight: 600; letter-spacing: 0.18em;
+  text-align: center; color: var(--accent);
+  background: var(--bg2); border: 1px solid var(--accent); border-radius: 12px;
+  padding: 18px 0; margin: 14px 0;
+}
+.code-input {
+  font-family: var(--mono); font-size: 28px; letter-spacing: 0.3em; text-align: center;
+}
+
+/* multiplayer transcript: who said what */
+.msg-author {
+  display: block; font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+  color: var(--accent); margin-bottom: 3px; opacity: 0.85;
+}
+.msg-player.msg-other .msg-bubble { background: var(--bg2); opacity: 0.92; }
+.msg-player.msg-other .msg-author { color: var(--dim); }
 
 /* ---------- forms / modal / toast ---------- */
 .form-row { display: grid; gap: 5px; margin: 12px 0; }

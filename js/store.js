@@ -322,7 +322,7 @@ const LocalStore = (function () {
  */
 const Store = (function () {
   const IDX_KEY = 'aigm:index';
-  const adapters = { local: LocalStore, cloud: null };
+  const adapters = { local: LocalStore, cloud: null, mp: null };
   let index = {};
 
   function loadIndex() {
@@ -345,9 +345,31 @@ const Store = (function () {
     /* Phase 1: hand the façade a live CloudStore (after Firebase auth). Passing
      * null detaches it (sign-out) so cloud games fall back to local routing. */
     attachCloud: function (cloud) { adapters.cloud = cloud; if (cloud && cloud.init) cloud.init(); },
+    /* Shared (multiplayer) adapter rooted at games/{gameId}; cid === gameId. */
+    attachShared: function (shared) { adapters.mp = shared; if (shared && shared.init) shared.init(); },
     isCloudReady: function () { return !!adapters.cloud; },
+    isMultiReady: function () { return !!adapters.mp; },
+    isMultiplayer: function (cid) { return backendOf(cid) === 'mp'; },
     backendOf: backendOf,
     newId: function () { return LocalStore.newId(); },
+
+    /* live updates for a game (multiplayer / cross-device). Returns an
+     * unsubscribe; no-op for backends without realtime (local). */
+    watch: function (cid, cb) { const a = adapterFor(cid); return a && a.watch ? a.watch(cid, cb) : function () {}; },
+    isRealtime: function (cid) { const a = adapterFor(cid); return !!(a && a.watch); },
+
+    /* the shared adapter (for the multiplayer module to read/write games/) */
+    shared: function () { return adapters.mp; },
+    /* register/forget which games this device routes as multiplayer */
+    setBackend: function (cid, backend) { index[cid] = backend; saveIndex(); },
+    /* On sign-in, learn the multiplayer games this user belongs to (from any
+     * device) and route them as mp so they appear in the campaign list. */
+    registerMemberships: async function () {
+      if (!adapters.cloud || !adapters.cloud.listJoinedGames) return;
+      const joined = await adapters.cloud.listJoinedGames();
+      joined.forEach(function (m) { if (m && m.gameId) index[m.gameId] = 'mp'; });
+      saveIndex();
+    },
 
     on: function (type, cb) {
       const offs = liveAdapters().map(function (k) { return adapters[k].on(type, cb); });
@@ -368,9 +390,23 @@ const Store = (function () {
     /* campaigns */
     listCampaigns: async function () {
       const out = [];
-      for (const k of liveAdapters()) {
+      /* local + cloud each own a campaigns collection we can list wholesale */
+      for (const k of ['local', 'cloud']) {
+        if (!adapters[k]) continue;
         const list = await adapters[k].listCampaigns();
         list.forEach(function (c) { c._backend = k; index[c.id] = k; out.push(c); });
+      }
+      /* multiplayer games aren't listable (rules forbid reading others'); fetch
+       * each one this user belongs to, by id, from the index. Drop stale ids. */
+      if (adapters.mp) {
+        const ids = Object.keys(index).filter(function (id) { return index[id] === 'mp'; });
+        for (const id of ids) {
+          try {
+            const c = await adapters.mp.getCampaign(id);
+            if (c) { c._backend = 'mp'; out.push(c); }
+            else { delete index[id]; }
+          } catch (e) { /* leave routing intact on a transient read error */ }
+        }
       }
       saveIndex();
       return out.sort(byRecent);
@@ -391,6 +427,18 @@ const Store = (function () {
       const r = await adapterFor(id).deleteCampaign(id);
       delete index[id]; saveIndex();
       return r;
+    },
+    /* Remember that this user belongs to a multiplayer game (so it resurfaces on
+     * their other devices) and route it as mp here. */
+    addMembership: async function (id) {
+      index[id] = 'mp'; saveIndex();
+      if (adapters.cloud && adapters.cloud.addJoinedGame) await adapters.cloud.addJoinedGame(id);
+    },
+    /* Leave a multiplayer game without deleting it for everyone: forget the
+     * membership and stop routing it here. The shared game itself is untouched. */
+    leaveGame: async function (id) {
+      if (adapters.cloud && adapters.cloud.removeJoinedGame) await adapters.cloud.removeJoinedGame(id);
+      delete index[id]; saveIndex();
     },
     touch: function (cid) { return adapterFor(cid).touch(cid); },
 

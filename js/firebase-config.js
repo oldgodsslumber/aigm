@@ -8,7 +8,8 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js';
 import {
   getFirestore, doc, getDoc, setDoc, deleteDoc,
-  collection, getDocs, writeBatch, onSnapshot
+  collection, getDocs, writeBatch, onSnapshot,
+  runTransaction, arrayUnion, arrayRemove
 } from 'https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js';
 import {
   getAuth, GoogleAuthProvider, signInWithPopup, signOut, onAuthStateChanged
@@ -26,9 +27,12 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const auth = getAuth(app);
-const fb = { doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, onSnapshot };
+const fb = {
+  doc, getDoc, setDoc, deleteDoc, collection, getDocs, writeBatch, onSnapshot,
+  runTransaction, arrayUnion, arrayRemove
+};
 
-/* Auth controls the rest of the app reaches via window (classic scripts). */
+/* Auth + Firestore primitives the classic scripts reach via window. */
 window.AIGMAuth = {
   available: true,
   signIn: function () { return signInWithPopup(auth, new GoogleAuthProvider()); },
@@ -38,13 +42,19 @@ window.AIGMAuth = {
 
 onAuthStateChanged(auth, async function (user) {
   if (user) {
+    window.FirebaseCtx = { db: db, fb: fb, uid: user.uid };
     Store.attachCloud(window.makeCloudStore({ db: db, fb: fb, uid: user.uid }));
-    /* lift this device's library into the cloud, then prime the cid -> backend
-     * index so a cold deep-link to a cloud game resolves */
+    /* shared adapter for multiplayer games rooted at games/{gameId} */
+    Store.attachShared(window.makeCloudStore({ db: db, fb: fb, campaignsPath: ['games'] }));
+    /* lift this device's library into the cloud, learn multiplayer memberships,
+     * then prime the cid -> backend index so cold deep-links resolve */
     try { await Store.mirrorLibraryToCloud(); } catch (e) { console.warn('[AI GM] library mirror failed', e); }
+    try { await Store.registerMemberships(); } catch (e) { console.warn('[AI GM] membership load failed', e); }
     try { await Store.listCampaigns(); } catch (e) { console.warn('[AI GM] cloud index prime failed', e); }
   } else {
+    window.FirebaseCtx = null;
     Store.attachCloud(null);
+    Store.attachShared(null);
   }
   if (window.AIGM_onAuth) window.AIGM_onAuth(user || null);
 });
