@@ -14,6 +14,12 @@ Views.play = async function (root, cid) {
 
   const isMP = !!(Store.isMultiplayer && Store.isMultiplayer(cid));
   const myUid = window.FirebaseCtx && window.FirebaseCtx.uid;
+  /* local table (pass-and-play): many players share this one screen. Reuses the
+   * party/name-prefix machinery, but "who's acting" comes from an on-screen
+   * toggle instead of a device uid, and nothing is networked. */
+  let isLocal = false;
+  const OOC = '__ooc__'; /* the "Table / OOC" chip — sends an un-named message */
+  let actingName = sessionStorage.getItem('aigm:acting:' + cid) || '';
   async function loadAll() {
     campaign = await Store.getCampaign(cid);
     const chars = await Store.listCharacters(cid);
@@ -33,6 +39,7 @@ Views.play = async function (root, cid) {
     messages = await Store.listMessages(cid);
   }
   await loadAll();
+  isLocal = !isMP && !!campaign.localParty;
   await Store.touch(cid);
 
   /* ---------- shell ---------- */
@@ -43,6 +50,11 @@ Views.play = async function (root, cid) {
   const banner = h('div', { class: 'play-banner', style: 'display:none' });
   const input = h('textarea', { class: 'composer-input', rows: drive ? '3' : '2', placeholder: 'What do you do?' });
   const sendBtn = h('button', { class: 'btn accent composer-send' }, 'Send');
+  /* local table: who's acting? a chip per PC + a Table/OOC chip, above the box */
+  const actingBar = h('div', { class: 'acting-bar', style: 'display:none' });
+  /* local table: open the party roster / mode settings */
+  const partyBtn = h('button', { class: 'btn small ghost', title: 'Pass-and-play: everyone on one screen takes turns' }, '👥 Party');
+  partyBtn.addEventListener('click', openPartySettings);
   const sceneTitleEl = h('span', { class: 'scene-title' });
   const pinsEl = h('span', { class: 'scene-pins' });
   const reqMeter = h('a', { class: 'req-meter', href: '#/settings', title: 'Gemini requests used today — click for the full breakdown' });
@@ -117,7 +129,7 @@ Views.play = async function (root, cid) {
   /* multiplayer: shows who currently holds the GM turn ("⏳ GM is responding to …") */
   const mpStatus = h('div', { class: 'mp-status', style: 'display:none' });
   const chatZone = h('div', { class: 'chat-zone' },
-    banner, logEl, mpStatus,
+    banner, logEl, mpStatus, actingBar,
     h('form', { class: 'composer', onsubmit: function (e) { e.preventDefault(); submit(); } },
       input, sendBtn),
     jumpBtn,
@@ -133,6 +145,7 @@ Views.play = async function (root, cid) {
        * they're host-only; every player keeps "Save character" for their own PC. */
       h('div', { class: 'scene-bar-actions' },
         reqMeter, saveCharBtn,
+        !isMP ? partyBtn : null,
         (!isMP || MP.isHost(campaign)) ? restoreBtn : null,
         (!isMP || MP.isHost(campaign)) ? savePointBtn : null,
         (!isMP || MP.isHost(campaign)) ? endSceneBtn : null)),
@@ -319,6 +332,102 @@ Views.play = async function (root, cid) {
     }
   }
 
+  /* ---------- local table: acting-PC toggle ---------- */
+  function composerPlaceholder() {
+    if (!isLocal) return 'What do you do?';
+    if (actingName === OOC) return 'Table talk or a question for the GM…';
+    return actingName ? 'What does ' + actingName + ' do?' : 'What do you do?';
+  }
+  function setActing(name) {
+    actingName = name;
+    sessionStorage.setItem('aigm:acting:' + cid, name);
+    renderActingBar();
+    input.placeholder = composerPlaceholder();
+    input.focus();
+  }
+  async function renderActingBar() {
+    if (!isLocal) { actingBar.style.display = 'none'; return; }
+    const pcs = (await Store.listCharacters(cid)).filter(function (c) { return !c.isNPC; });
+    const names = pcs.map(function (c) { return c.name; });
+    if (actingName !== OOC && names.indexOf(actingName) < 0) actingName = names[0] || OOC;
+    actingBar.innerHTML = '';
+    actingBar.style.display = '';
+    actingBar.append(h('span', { class: 'acting-label' }, 'Acting'));
+    pcs.forEach(function (c) {
+      const chip = h('button', { type: 'button', class: 'acting-chip' + (actingName === c.name ? ' on' : '') }, c.name);
+      chip.addEventListener('click', function () { setActing(c.name); });
+      actingBar.append(chip);
+    });
+    const ooc = h('button', { type: 'button', class: 'acting-chip ooc' + (actingName === OOC ? ' on' : '') }, 'Table / OOC');
+    ooc.addEventListener('click', function () { setActing(OOC); });
+    actingBar.append(ooc);
+    input.placeholder = composerPlaceholder();
+  }
+
+  /* ---------- local table: party roster + mode settings (modal) ---------- */
+  async function openPartySettings() {
+    const body = h('div', { class: 'modal-wide party-settings' });
+    await fillPartySettings(body);
+    Modal.open(body);
+  }
+  async function fillPartySettings(body) {
+    body.innerHTML = '';
+    const on = !!campaign.localParty;
+    const toggle = h('button', { type: 'button', class: 'btn small' + (on ? ' accent' : '') },
+      on ? 'Local table: ON' : 'Local table: OFF');
+    toggle.addEventListener('click', async function () {
+      campaign.localParty = !campaign.localParty;
+      await Store.saveCampaign(campaign);
+      isLocal = !!campaign.localParty;
+      await fillPartySettings(body);
+      renderActingBar();
+    });
+    body.append(
+      h('h2', null, 'Party — local pass-and-play'),
+      h('p', { class: 'card-sub' }, 'Everyone plays on this one screen. The GM narrates in third person by name; whoever is acting taps their character under the chat before they type.'),
+      h('div', { class: 'form-row' }, h('span', null, 'Mode'), toggle));
+    if (!campaign.localParty) {
+      body.append(h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: Modal.close }, 'Done')));
+      return;
+    }
+    const pcs = (await Store.listCharacters(cid)).filter(function (c) { return !c.isNPC; });
+    const list = h('div', { class: 'party-list' });
+    pcs.forEach(function (c) {
+      const row = h('div', { class: 'party-row' }, h('span', { class: 'party-name' }, c.name));
+      if (pcs.length > 1) {
+        const rm = h('button', { class: 'btn small ghost', title: 'Remove from this story' }, 'Remove');
+        rm.addEventListener('click', async function () {
+          await Store.removeCharacter(cid, c.id);
+          if (actingName === c.name) { actingName = ''; sessionStorage.removeItem('aigm:acting:' + cid); }
+          await fillPartySettings(body);
+          renderActingBar();
+        });
+        row.append(rm);
+      }
+      list.append(row);
+    });
+    body.append(h('h3', null, 'Players'), list);
+    /* add a player from the character library (one not already in this story) */
+    const libs = await Store.listLibChars();
+    const taken = {};
+    pcs.forEach(function (c) { if (c.libCharId) taken[c.libCharId] = true; });
+    const avail = libs.filter(function (c) { return !taken[c.id]; });
+    if (avail.length) {
+      const sel = h('select', null, avail.map(function (c) { return h('option', { value: c.id }, c.name); }));
+      const add = h('button', { class: 'btn small accent' }, 'Add player');
+      add.addEventListener('click', async function () {
+        if (!sel.value) return;
+        await Store.addCharacterToCampaign(cid, sel.value);
+        await fillPartySettings(body);
+        renderActingBar();
+      });
+      body.append(h('div', { class: 'party-add' }, sel, add));
+    } else {
+      body.append(h('p', { class: 'card-sub' }, 'Every saved character is already in this story. Make more under Characters to add them.'));
+    }
+    body.append(h('div', { class: 'modal-actions' }, h('button', { class: 'btn', onclick: Modal.close }, 'Done')));
+  }
+
   /* Reflect the shared GM lock: when another player is mid-turn, show who and
    * block sending until they're done (the realtime watch refreshes campaign). */
   function updateMpStatus() {
@@ -439,6 +548,9 @@ Views.play = async function (root, cid) {
     clearDraft();
     const pmsg = { role: 'player', content: text, sceneId: scene.id };
     if (isMP) { pmsg.authorUid = myUid; pmsg.authorName = (pc && pc.name) || 'Player'; }
+    /* local table: tag the move with whoever's acting; OOC leaves it un-named so
+     * the GM treats it as table talk rather than an in-fiction action */
+    else if (isLocal && actingName && actingName !== OOC) { pmsg.authorName = actingName; }
     const id = await Store.addMessage(cid, pmsg);
     pendingPlayer = { id: id, text: text };
     messages = await Store.listMessages(cid);
@@ -560,12 +672,15 @@ Views.play = async function (root, cid) {
         rulesNotes: campaign.rulesNotes, recap: campaign.recap,
         messages: messages, budget: Settings.budgetFor(settings)
       };
-      if (isMP) {
-        /* give the GM the whole party so it knows every character and who acted */
+      if (isMP || isLocal) {
+        /* give the GM the whole party so it knows every character and who acted.
+         * "taking this turn" = the device's own PC in networked play, or the
+         * on-screen acting selection at a local table. */
         const cast = await Store.listCharacters(cid);
         asmOpts.multiplayer = true;
         asmOpts.party = cast.filter(function (c) { return !c.isNPC; }).map(function (c) {
-          return { name: c.name, description: c.description || '', isMe: c.ownerUid === myUid };
+          return { name: c.name, description: c.description || '',
+            isMe: isMP ? (c.ownerUid === myUid) : (c.name === actingName) };
         });
       }
       const asm = Context.assemble(asmOpts);
@@ -914,7 +1029,7 @@ Views.play = async function (root, cid) {
       }
       return h('div', { class: 'msg msg-player' + (isMP && !mine ? ' msg-other' : '') },
         h('div', { class: 'msg-player-col' },
-          isMP && m.authorName ? h('span', { class: 'msg-author' }, m.authorName) : null,
+          (isMP || isLocal) && m.authorName ? h('span', { class: 'msg-author' }, m.authorName) : null,
           h('div', { class: 'msg-bubble', html: md(m.content) }),
           actions));
     }
@@ -1068,6 +1183,7 @@ Views.play = async function (root, cid) {
 
   renderHeader();
   renderLog();
+  renderActingBar();
   renderRequestMeter();
   refreshSaveControls();
   if (keyMissing() && messages.length) showBanner('No Gemini API key set — add yours in Settings to play.', false);

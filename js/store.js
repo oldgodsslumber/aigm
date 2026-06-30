@@ -186,6 +186,10 @@ const LocalStore = (function () {
       emit('sheet', { campaignId: cid, charId: ch.id });
       return ch.id;
     },
+    removeCharacter: async function (cid, chid) {
+      delete camp(cid).characters[chid]; persist();
+      emit('sheet', { campaignId: cid, charId: chid });
+    },
 
     /* sheet log (append-only; undo flips a flag and appends a reverse event) */
     addSheetEvent: async function (cid, ev) {
@@ -544,6 +548,17 @@ const Store = (function () {
     listCharacters: function (cid) { return adapterFor(cid).listCharacters(cid); },
     getCharacter: function (cid, chid) { return adapterFor(cid).getCharacter(cid, chid); },
     saveCharacter: function (cid, ch) { return adapterFor(cid).saveCharacter(cid, ch); },
+    removeCharacter: function (cid, chid) { const a = adapterFor(cid); return a.removeCharacter ? a.removeCharacter(cid, chid) : Promise.resolve(); },
+    /* Local-table (pass-and-play): add another player's library character to a
+     * campaign as a fresh per-story PC. Mirrors the seed at story creation. */
+    addCharacterToCampaign: async function (cid, libCharId) {
+      const lib = await this.getLibChar(libCharId);
+      if (!lib) return null;
+      return await this.saveCharacter(cid, {
+        name: lib.name, isNPC: false, libCharId: lib.id,
+        description: lib.description || '', createdAt: Date.now()
+      });
+    },
 
     /* sheet log */
     addSheetEvent: function (cid, ev) { return adapterFor(cid).addSheetEvent(cid, ev); },
