@@ -56,9 +56,29 @@ Views.settings = async function (root) {
     h('span', { class: 'sf-hint' }, 'Requests used today (resets at midnight). When a model is spent, the GM auto-switches to the next one.'),
     usageRows) : null;
 
+  /* first-run help: how to get a (free) Gemini key from Google AI Studio */
+  const keyHelp = h('details', { class: 'key-help' },
+    h('summary', null, 'Need a key? Get one free in ~2 minutes'),
+    h('div', { class: 'key-help-body' },
+      h('p', null,
+        'AI GM uses Google’s Gemini models. You bring your own API key — it’s free for personal use, and it’s stored only in this browser.'),
+      h('ol', null,
+        h('li', null, 'Open ',
+          h('a', { href: 'https://aistudio.google.com/apikey', target: '_blank', rel: 'noopener' },
+            'Google AI Studio → API keys'),
+          ' and sign in with any Google account.'),
+        h('li', null, 'Click ', h('strong', null, 'Create API key'),
+          '. If asked, let it create a new Google Cloud project (the default is fine).'),
+        h('li', null, 'Copy the key — it starts with ', h('code', null, 'AIza'), '.'),
+        h('li', null, 'Paste it into the ', h('strong', null, 'Gemini API key'),
+          ' box above and click ', h('strong', null, 'Save settings'), '.')),
+      h('p', { class: 'sf-hint' },
+        'The free tier has daily request limits per model; AI GM automatically falls back to the next model when one is spent. No credit card is required for the free tier.')));
+
   const geminiFields = h('div', { class: 'settings-sub' },
     row('Gemini API key', h('div', { class: 'inline-pair' }, keyInp, showKey),
       'Stored in this browser only — never synced, never sent anywhere but Google.'),
+    keyHelp,
     row('Model', gModel, 'Starts here, then auto-falls through 2.5 Flash → Flash Lite → Gemma 4 as daily limits are hit.'),
     usageBox);
   const localFields = h('div', { class: 'settings-sub' },
